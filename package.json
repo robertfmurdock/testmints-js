@@ -1,0 +1,44 @@
+{
+	"name": "@continuous-excellence/testmints",
+	"version": "0.0.0-dev",
+	"private": true,
+	"description": "Readable tests with explicit setup, exercise, verify, and teardown phases.",
+	"license": "MIT",
+	"type": "module",
+	"packageManager": "npm@11.19.1",
+	"engines": {
+		"node": ">=22",
+		"npm": ">=11"
+	},
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./vitest": {
+			"types": "./dist/vitest.d.ts",
+			"import": "./dist/vitest.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"peerDependencies": {
+		"vitest": "^5.0.0"
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"typecheck": "tsc -p tsconfig.json --noEmit && tsc -p test/types/tsconfig.json --noEmit",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"lint": "biome check .",
+		"format": "biome check --write .",
+		"check": "npm run lint && npm run typecheck && npm run test"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.14",
+		"@types/node": "^26.6.1",
+		"typescript": "^7.0.2",
+		"vitest": "^5.0.1"
+	}
+}
