@@ -1,3 +1,5 @@
+// noinspection SpellCheckingInspection
+
 import { expect } from "vitest";
 
 import { executeDefinition, validateDefinition } from "../src/index.js";
@@ -30,6 +32,7 @@ function emptyCalls(): string[] {
 	return [];
 }
 
+// noinspection JSUnusedGlobalSymbols
 mintTest(
 	"definition validation rejects malformed definitions before a test can run",
 	{

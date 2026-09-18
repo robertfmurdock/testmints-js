@@ -42,4 +42,6 @@ mintTest('a member can save their display name', {
 evidence for the library and an example of its intended use. Core-contract scenarios also use
 `mintTest`, exercising lower-level bootstrap primitives within that same test shape.
 
-Contributors should begin with [the project philosophy](docs/project-philosophy.md).
+Contributors should begin with [the project philosophy](docs/project-philosophy.md). The
+[library direction log](docs/library-direction.md) captures longer-term design questions that are
+not current commitments.
