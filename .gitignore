@@ -1,5 +1,8 @@
 node_modules/
 dist/
 coverage/
+.testmints/
+.testmints-fixture/
+.testmints-health-fixture/
 .idea/
 *.tsbuildinfo

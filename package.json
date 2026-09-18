@@ -5,6 +5,9 @@
 	"description": "Readable tests with explicit setup, exercise, verify, and teardown phases.",
 	"license": "MIT",
 	"type": "module",
+	"bin": {
+		"testmints": "./dist/cli.js"
+	},
 	"packageManager": "npm@11.19.1",
 	"engines": {
 		"node": ">=22",

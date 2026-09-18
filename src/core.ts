@@ -1,17 +1,67 @@
 export type Awaitable<T> = T | PromiseLike<T>;
 
 export type PhaseName = "setup" | "exercise" | "verify" | "teardown";
-export type PhaseStatus = "passed" | "failed";
+export type PhaseStatus = "passed" | "failed" | "skipped";
 
-export interface PhaseEvent {
-	phase: PhaseName;
-	status: PhaseStatus | "started";
-	error?: unknown;
+export interface EventContext {
+	runId: string;
+	producerId: string;
+	attemptId: string;
+	testId: string;
+	title: string;
 }
+
+export interface EventError {
+	name: string;
+	message: string;
+	stack?: string;
+}
+
+interface EventBase extends EventContext {
+	v: 1;
+	seq: number;
+	timestamp: string;
+}
+
+export interface AttemptStartedEvent extends EventBase {
+	kind: "attempt.start";
+}
+
+export interface AttemptEndedEvent extends EventBase {
+	kind: "attempt.end";
+	status: Exclude<PhaseStatus, "skipped">;
+	error?: EventError;
+}
+
+export interface PhaseStartedEvent extends EventBase {
+	kind: "phase.start";
+	phase: PhaseName;
+}
+
+export interface PhaseEndedEvent extends EventBase {
+	kind: "phase.end";
+	phase: PhaseName;
+	status: PhaseStatus;
+	durationMs: number;
+	reason?: string;
+	error?: EventError;
+}
+
+export type TestmintEvent =
+	| AttemptStartedEvent
+	| AttemptEndedEvent
+	| PhaseStartedEvent
+	| PhaseEndedEvent;
+
+type EventPayload =
+	| Omit<AttemptStartedEvent, keyof EventBase>
+	| Omit<AttemptEndedEvent, keyof EventBase>
+	| Omit<PhaseStartedEvent, keyof EventBase>
+	| Omit<PhaseEndedEvent, keyof EventBase>;
 
 /** Observational only: a sink can never alter test execution. */
 export interface EventSink {
-	emit(event: PhaseEvent): void | PromiseLike<void>;
+	emit(event: TestmintEvent): void | PromiseLike<void>;
 }
 
 export interface PhaseTools {
@@ -58,6 +108,9 @@ export type ValidatedDefinition<Input, Output> = Readonly<
 export interface ExecuteOptions {
 	signal?: AbortSignal;
 	sink?: EventSink;
+	eventContext?: EventContext;
+	/** Supplies a producer-wide event sequence when reporting spans attempts. */
+	nextEventSequence?: () => number;
 }
 
 const phaseKeys = new Set(["setup", "exercise", "verify", "teardown"]);
@@ -192,41 +245,89 @@ class AttemptScope implements ResourceScope {
 	}
 }
 
-async function emit(
-	sink: EventSink | undefined,
-	event: PhaseEvent,
-): Promise<void> {
-	try {
-		await sink?.emit(event);
-	} catch {
-		// Instrumentation is not allowed to affect test behavior in this slice.
+function eventError(error: unknown): EventError {
+	if (error instanceof Error) {
+		return {
+			name: error.name,
+			message: error.message,
+			...(error.stack === undefined ? {} : { stack: error.stack }),
+		};
+	}
+	return { name: "Error", message: String(error) };
+}
+
+class EventEmitter {
+	#sequence = 0;
+
+	constructor(
+		private readonly sink: EventSink | undefined,
+		private readonly context: EventContext | undefined,
+		private readonly nextSequence: (() => number) | undefined,
+	) {}
+
+	async emit(event: EventPayload): Promise<void> {
+		if (!this.sink) return;
+		const complete: TestmintEvent = {
+			...(this.context ?? {
+				runId: "local",
+				producerId: "local",
+				attemptId: "local",
+				testId: "local",
+				title: "local",
+			}),
+			...event,
+			v: 1,
+			seq: this.nextSequence?.() ?? this.#sequence++,
+			timestamp: new Date().toISOString(),
+		} as TestmintEvent;
+		try {
+			await this.sink.emit(complete);
+		} catch {
+			// Instrumentation is not allowed to affect test behavior in this slice.
+		}
 	}
 }
 
 async function runPhase<T>(
 	phase: PhaseName,
-	sink: EventSink | undefined,
+	emitter: EventEmitter,
 	callback: () => Awaitable<T>,
 ): Promise<{ ok: true; value: T } | { ok: false; error: unknown }> {
-	await emit(sink, { phase, status: "started" });
+	const startedAt = performance.now();
+	await emitter.emit({ kind: "phase.start", phase });
 	try {
 		const value = await callback();
-		await emit(sink, { phase, status: "passed" });
+		await emitter.emit({
+			kind: "phase.end",
+			phase,
+			status: "passed",
+			durationMs: performance.now() - startedAt,
+		});
 		return { ok: true, value };
 	} catch (error) {
-		await emit(sink, { phase, status: "failed", error });
+		await emitter.emit({
+			kind: "phase.end",
+			phase,
+			status: "failed",
+			durationMs: performance.now() - startedAt,
+			error: eventError(error),
+		});
 		return { ok: false, error };
 	}
 }
 
-function throwFailures(primaryError: unknown, cleanupErrors: unknown[]): void {
-	const errors =
-		primaryError === undefined
-			? cleanupErrors
-			: [primaryError, ...cleanupErrors];
-	if (errors.length === 0) return;
-	if (errors.length === 1) throw errors[0];
-	throw new AggregateError(errors, "Testmint execution and cleanup failed.");
+async function skipPhase(
+	emitter: EventEmitter,
+	phase: PhaseName,
+	reason: string,
+): Promise<void> {
+	await emitter.emit({
+		kind: "phase.end",
+		phase,
+		status: "skipped",
+		durationMs: 0,
+		reason,
+	});
 }
 
 export async function executeDefinition<Input, Output>(
@@ -234,6 +335,11 @@ export async function executeDefinition<Input, Output>(
 	options: ExecuteOptions = {},
 ): Promise<void> {
 	const scope = new AttemptScope();
+	const emitter = new EventEmitter(
+		options.sink,
+		options.eventContext,
+		options.nextEventSequence,
+	);
 	const signal = options.signal ?? new AbortController().signal;
 	const setupTools: SetupTools = { signal, scope };
 	const exerciseTools: ExerciseTools = { signal, scope };
@@ -243,37 +349,83 @@ export async function executeDefinition<Input, Output>(
 	let primaryError: unknown;
 	const cleanupErrors: unknown[] = [];
 
-	const setup = await runPhase("setup", options.sink, () =>
+	await emitter.emit({ kind: "attempt.start" });
+
+	const setup = await runPhase("setup", emitter, () =>
 		definition.setup(setupTools),
 	);
 	if (setup.ok) {
 		const input = setup.value;
 		completedSetup = { input };
-		const exercise = await runPhase("exercise", options.sink, () =>
+		const exercise = await runPhase("exercise", emitter, () =>
 			definition.exercise(input, exerciseTools),
 		);
 		if (exercise.ok) {
-			const verify = await runPhase("verify", options.sink, () =>
+			const verify = await runPhase("verify", emitter, () =>
 				definition.verify(exercise.value, input, phaseTools),
 			);
 			if (!verify.ok) primaryError = verify.error;
 		} else {
 			primaryError = exercise.error;
+			await skipPhase(emitter, "verify", "exercise failed");
 		}
 	} else {
 		primaryError = setup.error;
+		await skipPhase(emitter, "exercise", "setup failed");
+		await skipPhase(emitter, "verify", "setup failed");
 	}
 
+	const teardownStartedAt = performance.now();
+	await emitter.emit({ kind: "phase.start", phase: "teardown" });
 	if (completedSetup && definition.teardown) {
-		const teardown = await runPhase("teardown", options.sink, () =>
-			definition.teardown?.(completedSetup.input, cleanupTools),
-		);
-		if (!teardown.ok) {
-			if (primaryError === undefined) primaryError = teardown.error;
-			else cleanupErrors.push(teardown.error);
+		try {
+			await definition.teardown(completedSetup.input, cleanupTools);
+		} catch (error) {
+			cleanupErrors.push(error);
 		}
 	}
-
 	cleanupErrors.push(...(await scope.close(cleanupTools)));
-	throwFailures(primaryError, cleanupErrors);
+	if (cleanupErrors.length === 0) {
+		await emitter.emit({
+			kind: "phase.end",
+			phase: "teardown",
+			status: "passed",
+			durationMs: performance.now() - teardownStartedAt,
+		});
+	} else {
+		const teardownError =
+			cleanupErrors.length === 1
+				? cleanupErrors[0]
+				: new AggregateError(cleanupErrors, "Testmint cleanup failed.");
+		await emitter.emit({
+			kind: "phase.end",
+			phase: "teardown",
+			status: "failed",
+			durationMs: performance.now() - teardownStartedAt,
+			error: eventError(teardownError),
+		});
+	}
+
+	const finalError =
+		primaryError === undefined && cleanupErrors.length === 0
+			? undefined
+			: primaryError === undefined
+				? cleanupErrors.length === 1
+					? cleanupErrors[0]
+					: new AggregateError(
+							cleanupErrors,
+							"Testmint execution and cleanup failed.",
+						)
+				: cleanupErrors.length === 0
+					? primaryError
+					: new AggregateError(
+							[primaryError, ...cleanupErrors],
+							"Testmint execution and cleanup failed.",
+						);
+	await emitter.emit({
+		kind: "attempt.end",
+		status: finalError === undefined ? "passed" : "failed",
+		...(finalError === undefined ? {} : { error: eventError(finalError) }),
+	});
+	if (finalError !== undefined) throw finalError;
 }

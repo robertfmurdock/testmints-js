@@ -300,7 +300,12 @@ mintTest(
 				}),
 				{
 					sink: {
-						emit: (event) => void events.push(`${event.phase}:${event.status}`),
+						emit: (event) => {
+							if (event.kind === "phase.start")
+								events.push(`${event.phase}:started`);
+							if (event.kind === "phase.end")
+								events.push(`${event.phase}:${event.status}`);
+						},
 					},
 				},
 			);
@@ -327,3 +332,62 @@ mintTest(
 			]),
 	},
 );
+
+mintTest(
+	"event streams mark phases skipped after setup failure and still close cleanup",
+	{
+		setup: (): { events: string[] } => ({ events: [] }),
+		exercise: async ({ events }) => {
+			await captureError(() =>
+				executeDefinition(
+					validateDefinition({
+						setup: () => {
+							throw new Error("database unavailable");
+						},
+						exercise: () => undefined,
+						verify: () => undefined,
+					}),
+					{
+						sink: {
+							emit: (event) => {
+								if (event.kind === "phase.end")
+									events.push(`${event.phase}:${event.status}`);
+							},
+						},
+					},
+				),
+			);
+			return events;
+		},
+		verify: (events) =>
+			expect(events).toEqual([
+				"setup:failed",
+				"exercise:skipped",
+				"verify:skipped",
+				"teardown:passed",
+			]),
+	},
+);
+
+mintTest("a producer sequence remains monotonic across separate attempts", {
+	setup: (): { sequences: number[] } => ({ sequences: [] }),
+	exercise: async ({ sequences }) => {
+		let nextSequence = 0;
+		const options = {
+			nextEventSequence: () => nextSequence++,
+			sink: {
+				emit: (event: { seq: number }) => void sequences.push(event.seq),
+			},
+		};
+		const definition = validateDefinition({
+			setup: () => undefined,
+			exercise: () => undefined,
+			verify: () => undefined,
+		});
+		await executeDefinition(definition, options);
+		await executeDefinition(definition, options);
+		return sequences;
+	},
+	verify: (sequences) =>
+		expect(sequences).toEqual(sequences.map((_sequence, index) => index)),
+});
