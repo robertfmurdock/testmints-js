@@ -1,0 +1,14 @@
+{
+  "releaseBranch": "main",
+  "implicitPatch": true,
+  "allowDetachedHead": false,
+  "forceSnapshot": false,
+  "majorRegex": "\\[major\\]",
+  "minorRegex": "\\[minor\\]",
+  "patchRegex": "\\[patch\\]",
+  "noneRegex": "\\[none\\]",
+  "versionRegex": null,
+  "userName": "github-actions[bot]",
+  "userEmail": "41898282+github-actions[bot]@users.noreply.github.com",
+  "warningsAsErrors": true
+}

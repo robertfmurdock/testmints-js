@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -137,7 +137,7 @@ export async function inspect(directory: string): Promise<number> {
 const invokedPath = process.argv[1];
 if (
 	invokedPath !== undefined &&
-	import.meta.url === pathToFileURL(invokedPath).href
+	import.meta.url === pathToFileURL(await realpath(invokedPath)).href
 ) {
 	if (process.argv[2] !== "inspect" || process.argv[3] === undefined) usage();
 	process.exitCode = await inspect(resolve(process.argv[3]));

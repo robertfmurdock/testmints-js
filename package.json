@@ -1,9 +1,16 @@
 {
-	"name": "@continuous-excellence/testmints",
+	"name": "@continuous-excellence/testmints-js",
 	"version": "0.0.0-dev",
-	"private": true,
 	"description": "Readable tests with explicit setup, exercise, verify, and teardown phases.",
 	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/robertfmurdock/testmints-js.git"
+	},
+	"bugs": {
+		"url": "https://github.com/robertfmurdock/testmints-js/issues"
+	},
+	"homepage": "https://github.com/robertfmurdock/testmints-js#readme",
 	"type": "module",
 	"bin": {
 		"testmints": "./dist/cli.js"
@@ -26,6 +33,9 @@
 	"files": [
 		"dist"
 	],
+	"publishConfig": {
+		"access": "public"
+	},
 	"peerDependencies": {
 		"vitest": "^5.0.0"
 	},
@@ -36,10 +46,15 @@
 		"test:watch": "vitest",
 		"lint": "biome check .",
 		"format": "biome check --write .",
-		"check": "npm run lint && npm run typecheck && npm run test"
+		"check": "npm run lint && npm run typecheck && npm run test",
+		"release:version": "bash scripts/release-version.sh",
+		"release:pack": "npm run build && node scripts/pack-release.mjs",
+		"release:verify": "node scripts/verify-release-package.mjs",
+		"release:tag": "bash scripts/tag-release.sh"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.14",
+		"@continuous-excellence/tagger": "3.6.18",
 		"@types/node": "^26.6.1",
 		"typescript": "^7.0.2",
 		"vitest": "^5.0.1"

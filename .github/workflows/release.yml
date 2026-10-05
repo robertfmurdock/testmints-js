@@ -1,0 +1,96 @@
+name: Check and publish
+
+on:
+  push:
+    branches:
+      - "**"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Pin npm
+        run: |
+          npm install --global npm@11.19.1
+          test "$(npm --version)" = "11.19.1"
+      - run: npm ci
+      - run: npm run check
+
+  release:
+    if: github.ref == 'refs/heads/main'
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.ref_name }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - name: Pin npm
+        run: |
+          npm install --global npm@11.19.1
+          test "$(npm --version)" = "11.19.1"
+      - run: npm ci
+      - name: Calculate release version
+        id: version
+        run: |
+          version="$(npm run --silent release:version)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Refuse an existing npm version
+        if: steps.version.outputs.version != '0.0.0'
+        env:
+          PACKAGE: "@continuous-excellence/testmints-js"
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          published="$(npm view "$PACKAGE@$RELEASE_VERSION" version --prefer-online 2>/dev/null || true)"
+          test -z "$published" || {
+            echo "$PACKAGE@$RELEASE_VERSION is already published." >&2
+            exit 1
+          }
+      - name: Build the release tarball
+        if: steps.version.outputs.version != '0.0.0'
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: npm run release:pack
+      - name: Verify the release tarball as a consumer
+        if: steps.version.outputs.version != '0.0.0'
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: npm run release:verify -- .release/*.tgz
+      - name: Publish with npm trusted publishing
+        if: steps.version.outputs.version != '0.0.0'
+        run: npm publish .release/*.tgz --access public
+      - name: Confirm npm publication
+        if: steps.version.outputs.version != '0.0.0'
+        env:
+          PACKAGE: "@continuous-excellence/testmints-js"
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for attempt in {1..60}; do
+            published="$(npm view "$PACKAGE@$RELEASE_VERSION" version --prefer-online 2>/dev/null || true)"
+            if [ "$published" = "$RELEASE_VERSION" ]; then exit 0; fi
+            echo "Waiting for $PACKAGE@$RELEASE_VERSION (attempt $attempt of 60)."
+            sleep 5
+          done
+          exit 1
+      - name: Tag the published release
+        if: steps.version.outputs.version != '0.0.0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: npm run --silent release:tag -- "${{ steps.version.outputs.version }}"

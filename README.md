@@ -1,10 +1,14 @@
 # Testmints
 
+> **Status: incubating and experimental. Do not integrate Testmints into a project at this time.**
+> Its API, behavior, artifact format, package availability, and release policy may change or be
+> withdrawn without compatibility guarantees.
+
 Testmints gives ordinary tests an explicit shape: **setup → exercise → verify → teardown**.
 It owns phase sequencing and locally acquired resource cleanup, while your test runner and assertion
 library remain yours.
 
-This is an early, private implementation of `@continuous-excellence/testmints`. It supports a
+This is an early implementation of `@continuous-excellence/testmints-js`. It supports a
 runner-independent executor, Vitest registration, and an opt-in local phase stream. Cancellation
 policy, task groups, browser reporting, and additional runners are intentionally not available yet.
 
@@ -13,7 +17,7 @@ also proving the library behavior it relies on.
 
 ```ts
 import { expect } from 'vitest'
-import { mintTest } from '@continuous-excellence/testmints/vitest'
+import { mintTest } from '@continuous-excellence/testmints-js/vitest'
 
 mintTest('15 produces FizzBuzz', {
   setup: () => 15,
@@ -29,7 +33,7 @@ per-test configuration.
 
 ```ts
 import { defineConfig } from 'vitest/config'
-import { testmintsVitest } from '@continuous-excellence/testmints/vitest'
+import { testmintsVitest } from '@continuous-excellence/testmints-js/vitest'
 
 export default defineConfig({
   plugins: [testmintsVitest()],
@@ -80,4 +84,5 @@ evidence for the library and an example of its intended use. Core-contract scena
 
 Contributors should begin with [the project philosophy](docs/project-philosophy.md). The
 [library direction log](docs/library-direction.md) captures longer-term design questions that are
-not current commitments.
+not current commitments. Maintainers can follow the [publishing guide](docs/publishing.md) for the
+one-time `0.0.0` bootstrap and the subsequent trunk-based release flow.
