@@ -28,8 +28,10 @@ try {
 		resolve(directory, "verify.mjs"),
 		[
 			'import { executeDefinition } from "@continuous-excellence/testmints-js";',
-			'import { mintTest } from "@continuous-excellence/testmints-js/vitest";',
-			'if (typeof executeDefinition !== "function" || typeof mintTest !== "function") {',
+			'import { mint as vitestMint } from "@continuous-excellence/testmints-js/vitest";',
+			'import { mint } from "@continuous-excellence/testmints-js/playwright";',
+			'import TestmintsPlaywrightReporter from "@continuous-excellence/testmints-js/playwright/reporter";',
+			'if (typeof executeDefinition !== "function" || typeof vitestMint !== "function" || typeof mint !== "function" || typeof TestmintsPlaywrightReporter !== "function") {',
 			'  throw new Error("Published exports are unavailable.");',
 			"}",
 		].join("\n"),

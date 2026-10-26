@@ -2,5 +2,14 @@
 	"$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
 	"formatter": { "enabled": true },
 	"linter": { "enabled": true },
-	"files": { "includes": ["**", "!dist", "!node_modules"] }
+	"files": {
+		"includes": [
+			"**",
+			"!dist",
+			"!node_modules",
+			"!.release",
+			"!.testmints*",
+			"!test-results"
+		]
+	}
 }

@@ -5,5 +5,8 @@ coverage/
 .testmints/
 .testmints-fixture/
 .testmints-health-fixture/
+.testmints-playwright-fixture/
+.testmints-playwright-failed-fixture/
+test-results/
 .idea/
 *.tsbuildinfo

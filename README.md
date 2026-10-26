@@ -9,8 +9,9 @@ It owns phase sequencing and locally acquired resource cleanup, while your test 
 library remain yours.
 
 This is an early implementation of `@continuous-excellence/testmints-js`. It supports a
-runner-independent executor, Vitest registration, and an opt-in local phase stream. Cancellation
-policy, task groups, browser reporting, and additional runners are intentionally not available yet.
+runner-independent executor, Vitest and Playwright Test registration, and opt-in local phase
+streams. Task groups and additional runners are intentionally not available yet; cancellation
+guarantees remain runner-specific.
 
 The test suite is first-class usage documentation: each test should show a realistic scenario while
 also proving the library behavior it relies on.
@@ -63,9 +64,8 @@ a member can save their display name — FAILED
   teardown     18 ms  passed
 ```
 
-The first reporter is deliberately Node/Vitest-only. It records Testmints phase boundaries and
-does not inspect assertion libraries, capture arbitrary data, or promise cancellation beyond the
-runner signal passed to active phases.
+The Vitest reporter records Testmints phase boundaries and does not inspect assertion libraries,
+capture arbitrary data, or promise cancellation beyond the runner signal passed to active phases.
 
 Resources acquired through `scope.using()` survive verification and are released in reverse order,
 including after a failed setup, exercise, or verification.
@@ -79,6 +79,45 @@ test('a member can save their display name', mint({
   exercise: ({ account, displayName }) => updateProfile(account.id, { displayName }),
   verify: (profile) => expect(profile.displayName).toBe('Ada'),
 }))
+```
+
+## Playwright Test
+
+Playwright support exposes the same four phases as native `test.step` entries and can write the
+same inspectable local artifacts. Playwright requires fixture names to be visibly destructured in
+the test callback; Testmints phases close over those runner-owned fixtures:
+
+```ts
+import { expect, test as base } from '@playwright/test'
+import { mint } from '@continuous-excellence/testmints-js/playwright'
+
+const test = base.extend<{ greeting: string }>({
+  greeting: async ({}, use) => use('Hello'),
+})
+test('a visitor sees a greeting', ({ page, greeting }) =>
+  mint({
+    setup: async () => {
+      await page.setContent(`<main>${greeting}</main>`)
+      return page.getByRole('main')
+    },
+    exercise: (main) => main.textContent(),
+    verify: (content) => expect(content).toBe(greeting),
+  }),
+)
+```
+
+`mint` validates as the Playwright test begins. The implicit-return arrow keeps its promise visible
+to the runner. Playwright does not provide a public cancellation signal; Testmints therefore
+preserves its hard timeout and can only run cleanup when the runner returns control to the callback.
+
+Add the reporter to `playwright.config.ts` to aggregate attached phase streams under `.testmints`:
+
+```ts
+import { defineConfig } from '@playwright/test'
+
+export default defineConfig({
+  reporter: [['list'], ['@continuous-excellence/testmints-js/playwright/reporter']],
+})
 ```
 
 ## Development

@@ -1,7 +1,7 @@
 import { threadId } from "node:worker_threads";
 import type { Plugin } from "vite";
 import type { TestContext, TestFunction } from "vitest";
-import { inject, test } from "vitest";
+import { inject } from "vitest";
 import type { Reporter } from "vitest/node";
 
 import {
@@ -71,16 +71,6 @@ export function mint<Input, Output>(
 ): TestFunction {
 	const validated = validateDefinition(definition);
 	return async (context) => runValidatedMint(validated, context);
-}
-
-/**
- * @deprecated Use Vitest registration directly: `test(name, mint(definition))`.
- */
-export function mintTest<Input, Output>(
-	name: string,
-	definition: TestmintDefinition<Input, Output>,
-): void {
-	test(name, mint(definition));
 }
 
 class TestmintsReporter implements Reporter {

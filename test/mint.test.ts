@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import { expect, test } from "vitest";
 
-import { mint, mintTest, runMint } from "../src/vitest.js";
+import { mint, runMint } from "../src/vitest.js";
 
 type Outcome<T> = { ok: true; value: T } | { ok: false; error: unknown };
 
@@ -128,10 +128,4 @@ test("explicit execution uses the active Vitest context", async (context) => {
 		},
 		context,
 	);
-});
-
-mintTest("mintTest remains available for existing suites", {
-	setup: () => undefined,
-	exercise: () => undefined,
-	verify: () => undefined,
 });

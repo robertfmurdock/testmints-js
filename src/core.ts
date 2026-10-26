@@ -111,6 +111,11 @@ export interface ExecuteOptions {
 	eventContext?: EventContext;
 	/** Supplies a producer-wide event sequence when reporting spans attempts. */
 	nextEventSequence?: () => number;
+	/** Lets a runner present an awaited Testmints phase in its native UI. */
+	executePhase?: <T>(
+		phase: PhaseName,
+		callback: () => Awaitable<T>,
+	) => Awaitable<T>;
 }
 
 const phaseKeys = new Set(["setup", "exercise", "verify", "teardown"]);
@@ -292,11 +297,14 @@ async function runPhase<T>(
 	phase: PhaseName,
 	emitter: EventEmitter,
 	callback: () => Awaitable<T>,
+	executePhase: ExecuteOptions["executePhase"],
 ): Promise<{ ok: true; value: T } | { ok: false; error: unknown }> {
 	const startedAt = performance.now();
 	await emitter.emit({ kind: "phase.start", phase });
 	try {
-		const value = await callback();
+		const value = await (executePhase === undefined
+			? callback()
+			: executePhase(phase, callback));
 		await emitter.emit({
 			kind: "phase.end",
 			phase,
@@ -351,18 +359,27 @@ export async function executeDefinition<Input, Output>(
 
 	await emitter.emit({ kind: "attempt.start" });
 
-	const setup = await runPhase("setup", emitter, () =>
-		definition.setup(setupTools),
+	const setup = await runPhase(
+		"setup",
+		emitter,
+		() => definition.setup(setupTools),
+		options.executePhase,
 	);
 	if (setup.ok) {
 		const input = setup.value;
 		completedSetup = { input };
-		const exercise = await runPhase("exercise", emitter, () =>
-			definition.exercise(input, exerciseTools),
+		const exercise = await runPhase(
+			"exercise",
+			emitter,
+			() => definition.exercise(input, exerciseTools),
+			options.executePhase,
 		);
 		if (exercise.ok) {
-			const verify = await runPhase("verify", emitter, () =>
-				definition.verify(exercise.value, input, phaseTools),
+			const verify = await runPhase(
+				"verify",
+				emitter,
+				() => definition.verify(exercise.value, input, phaseTools),
+				options.executePhase,
 			);
 			if (!verify.ok) primaryError = verify.error;
 		} else {
@@ -375,36 +392,24 @@ export async function executeDefinition<Input, Output>(
 		await skipPhase(emitter, "verify", "setup failed");
 	}
 
-	const teardownStartedAt = performance.now();
-	await emitter.emit({ kind: "phase.start", phase: "teardown" });
-	if (completedSetup && definition.teardown) {
-		try {
-			await definition.teardown(completedSetup.input, cleanupTools);
-		} catch (error) {
-			cleanupErrors.push(error);
-		}
-	}
-	cleanupErrors.push(...(await scope.close(cleanupTools)));
-	if (cleanupErrors.length === 0) {
-		await emitter.emit({
-			kind: "phase.end",
-			phase: "teardown",
-			status: "passed",
-			durationMs: performance.now() - teardownStartedAt,
-		});
-	} else {
-		const teardownError =
-			cleanupErrors.length === 1
-				? cleanupErrors[0]
-				: new AggregateError(cleanupErrors, "Testmint cleanup failed.");
-		await emitter.emit({
-			kind: "phase.end",
-			phase: "teardown",
-			status: "failed",
-			durationMs: performance.now() - teardownStartedAt,
-			error: eventError(teardownError),
-		});
-	}
+	await runPhase(
+		"teardown",
+		emitter,
+		async () => {
+			if (completedSetup && definition.teardown) {
+				try {
+					await definition.teardown(completedSetup.input, cleanupTools);
+				} catch (error) {
+					cleanupErrors.push(error);
+				}
+			}
+			cleanupErrors.push(...(await scope.close(cleanupTools)));
+			if (cleanupErrors.length === 1) throw cleanupErrors[0];
+			if (cleanupErrors.length > 1)
+				throw new AggregateError(cleanupErrors, "Testmint cleanup failed.");
+		},
+		options.executePhase,
+	);
 
 	const finalError =
 		primaryError === undefined && cleanupErrors.length === 0

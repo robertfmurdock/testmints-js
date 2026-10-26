@@ -28,6 +28,14 @@
 		"./vitest": {
 			"types": "./dist/vitest.d.ts",
 			"import": "./dist/vitest.js"
+		},
+		"./playwright": {
+			"types": "./dist/playwright.d.ts",
+			"import": "./dist/playwright.js"
+		},
+		"./playwright/reporter": {
+			"types": "./dist/playwright-reporter.d.ts",
+			"import": "./dist/playwright-reporter.js"
 		}
 	},
 	"files": [
@@ -37,12 +45,14 @@
 		"access": "public"
 	},
 	"peerDependencies": {
+		"@playwright/test": "^1.64.1",
 		"vitest": "^5.0.0"
 	},
 	"scripts": {
 		"build": "tsc -p tsconfig.build.json",
 		"typecheck": "tsc -p tsconfig.json --noEmit && tsc -p test/types/tsconfig.json --noEmit",
 		"test": "vitest run",
+		"test:playwright": "playwright test -c test/playwright.config.ts",
 		"test:watch": "vitest",
 		"lint": "biome check .",
 		"format": "biome check --write .",
@@ -55,6 +65,7 @@
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.14",
 		"@continuous-excellence/tagger": "3.6.18",
+		"@playwright/test": "^1.64.1",
 		"@types/node": "^26.6.1",
 		"typescript": "^7.0.2",
 		"vitest": "^5.0.1"
