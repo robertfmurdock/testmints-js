@@ -1,5 +1,6 @@
 import { threadId } from "node:worker_threads";
 import type { Plugin } from "vite";
+import type { TestContext, TestFunction } from "vitest";
 import { inject, test } from "vitest";
 import type { Reporter } from "vitest/node";
 
@@ -32,32 +33,54 @@ function id(): string {
 const producerId = `${process.pid}-${threadId}`;
 let producerSequence = 0;
 
-/** Register a complete Testmint definition with Vitest. */
+async function runValidatedMint<Input, Output>(
+	definition: TestmintDefinition<Input, Output>,
+	context: TestContext,
+): Promise<void> {
+	const reporting = reportingContext();
+	const task = context.task;
+	await executeDefinition(definition, {
+		signal: context.signal,
+		...(reporting === undefined
+			? {}
+			: {
+					sink: new NdjsonEventSink(reporting),
+					eventContext: {
+						runId: reporting.runId,
+						producerId,
+						attemptId: id(),
+						testId: task.id,
+						title: task.fullName,
+					},
+					nextEventSequence: () => producerSequence++,
+				}),
+	});
+}
+
+/** Execute a complete Testmint definition from a Vitest test callback. */
+export async function runMint<Input, Output>(
+	definition: TestmintDefinition<Input, Output>,
+	context: TestContext,
+): Promise<void> {
+	await runValidatedMint(validateDefinition(definition), context);
+}
+
+/** Create a Vitest callback from a complete Testmint definition. */
+export function mint<Input, Output>(
+	definition: TestmintDefinition<Input, Output>,
+): TestFunction {
+	const validated = validateDefinition(definition);
+	return async (context) => runValidatedMint(validated, context);
+}
+
+/**
+ * @deprecated Use Vitest registration directly: `test(name, mint(definition))`.
+ */
 export function mintTest<Input, Output>(
 	name: string,
 	definition: TestmintDefinition<Input, Output>,
 ): void {
-	const validated = validateDefinition(definition);
-	test(name, async (context) => {
-		const reporting = reportingContext();
-		const task = context.task;
-		await executeDefinition(validated, {
-			signal: context.signal,
-			...(reporting === undefined
-				? {}
-				: {
-						sink: new NdjsonEventSink(reporting),
-						eventContext: {
-							runId: reporting.runId,
-							producerId,
-							attemptId: id(),
-							testId: task.id,
-							title: task.fullName,
-						},
-						nextEventSequence: () => producerSequence++,
-					}),
-		});
-	});
+	test(name, mint(definition));
 }
 
 class TestmintsReporter implements Reporter {

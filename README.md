@@ -16,19 +16,24 @@ The test suite is first-class usage documentation: each test should show a reali
 also proving the library behavior it relies on.
 
 ```ts
-import { expect } from 'vitest'
-import { mintTest } from '@continuous-excellence/testmints-js/vitest'
+import { expect, test } from 'vitest'
+import { mint } from '@continuous-excellence/testmints-js/vitest'
 
-mintTest('15 produces FizzBuzz', {
+test('15 produces FizzBuzz', mint({
   setup: () => 15,
   exercise: (input) => fizzBuzz(input),
   verify: (output) => expect(output).toBe('FizzBuzz'),
-})
+}))
 ```
+
+`mint` validates the complete definition when the test file is collected, while keeping Vitest's
+`test` or `it` call visible to test explorers and source scanners. When an explicit callback is
+clearer—for example, in a parameterized test—use `runMint(definition, context)` inside the Vitest
+callback instead.
 
 ## Local phase artifacts with Vitest
 
-Enable the Node/Vitest reporting plugin in `vitest.config.ts`. Existing `mintTest` calls need no
+Enable the Node/Vitest reporting plugin in `vitest.config.ts`. Existing `mint` callbacks need no
 per-test configuration.
 
 ```ts
@@ -66,21 +71,22 @@ Resources acquired through `scope.using()` survive verification and are released
 including after a failed setup, exercise, or verification.
 
 ```ts
-mintTest('a member can save their display name', {
+test('a member can save their display name', mint({
   setup: async ({ scope }) => ({
     account: await scope.using('temporary account', createAccount, deleteAccount),
     displayName: 'Ada',
   }),
   exercise: ({ account, displayName }) => updateProfile(account.id, { displayName }),
   verify: (profile) => expect(profile.displayName).toBe('Ada'),
-})
+}))
 ```
 
 ## Development
 
 `npm run check` runs formatting/lint checks, type fixtures, and the test suite. Every test is both
 evidence for the library and an example of its intended use. Core-contract scenarios also use
-`mintTest`, exercising lower-level bootstrap primitives within that same test shape.
+visible Vitest registration with `mint`, exercising lower-level bootstrap primitives within that
+same test shape.
 
 Contributors should begin with [the project philosophy](docs/project-philosophy.md). The
 [library direction log](docs/library-direction.md) captures longer-term design questions that are

@@ -1,9 +1,9 @@
 // noinspection SpellCheckingInspection
 
-import { expect } from "vitest";
+import { expect, test } from "vitest";
 
 import { executeDefinition, validateDefinition } from "../src/index.js";
-import { mintTest } from "../src/vitest.js";
+import { mint } from "../src/vitest.js";
 
 async function captureError<T>(
 	action: () => T | PromiseLike<T>,
@@ -33,9 +33,9 @@ function emptyCalls(): string[] {
 }
 
 // noinspection JSUnusedGlobalSymbols
-mintTest(
+test(
 	"definition validation rejects malformed definitions before a test can run",
-	{
+	mint({
 		setup: () => [
 			() => validateUnknown(null),
 			() => validateUnknown([]),
@@ -66,12 +66,12 @@ mintTest(
 				expect(error).toBeInstanceOf(TypeError);
 			}
 		},
-	},
+	}),
 );
 
-mintTest(
+test(
 	"registration captures phase callbacks instead of later mutable changes",
-	{
+	mint({
 		setup: (): { calls: string[] } => ({ calls: [] }),
 		exercise: async ({ calls }) => {
 			const definition = {
@@ -85,39 +85,47 @@ mintTest(
 			return calls;
 		},
 		verify: (calls) => expect(calls).toEqual(["original"]),
-	},
+	}),
 );
 
-mintTest("the executor awaits setup, exercise, verify, and teardown in order", {
-	setup: emptyCalls,
-	exercise: async (calls) => {
-		await executeDefinition(
-			validateDefinition({
-				setup: async () => {
-					calls.push("setup");
-					return 2;
-				},
-				exercise: async (input) => {
-					calls.push(`exercise:${input}`);
-					return input * 3;
-				},
-				verify: async (output, input) => {
-					calls.push(`verify:${input}:${output}`);
-				},
-				teardown: async (input) => {
-					calls.push(`teardown:${input}`);
-				},
-			}),
-		);
-		return calls;
-	},
-	verify: (calls) =>
-		expect(calls).toEqual(["setup", "exercise:2", "verify:2:6", "teardown:2"]),
-});
+test(
+	"the executor awaits setup, exercise, verify, and teardown in order",
+	mint({
+		setup: emptyCalls,
+		exercise: async (calls) => {
+			await executeDefinition(
+				validateDefinition({
+					setup: async () => {
+						calls.push("setup");
+						return 2;
+					},
+					exercise: async (input) => {
+						calls.push(`exercise:${input}`);
+						return input * 3;
+					},
+					verify: async (output, input) => {
+						calls.push(`verify:${input}:${output}`);
+					},
+					teardown: async (input) => {
+						calls.push(`teardown:${input}`);
+					},
+				}),
+			);
+			return calls;
+		},
+		verify: (calls) =>
+			expect(calls).toEqual([
+				"setup",
+				"exercise:2",
+				"verify:2:6",
+				"teardown:2",
+			]),
+	}),
+);
 
-mintTest(
+test(
 	"setup failure skips later phases and releases owned resources in reverse order",
-	{
+	mint({
 		setup: emptyCalls,
 		exercise: async (calls) => ({
 			calls,
@@ -150,12 +158,12 @@ mintTest(
 			);
 			expect(calls).toEqual(["release:second", "release:first"]);
 		},
-	},
+	}),
 );
 
-mintTest(
+test(
 	"exercise failure skips verify but runs teardown and resource cleanup",
-	{
+	mint({
 		setup: emptyCalls,
 		exercise: async (calls) => ({
 			calls,
@@ -189,69 +197,79 @@ mintTest(
 				"release:fixture",
 			]);
 		},
-	},
+	}),
 );
 
-mintTest("verification failure retains teardown and release failures", {
-	setup: () => ({
-		primary: new Error("primary"),
-		teardown: new Error("teardown"),
-		cleanup: new Error("cleanup"),
-	}),
-	exercise: ({ primary, teardown, cleanup }) =>
-		captureError(() =>
-			executeDefinition(
-				validateDefinition({
-					setup: async ({ scope }) => {
-						await scope.using(
-							"resource",
-							() => "resource",
-							() => {
-								throw cleanup;
-							},
-						);
-						return undefined;
-					},
-					exercise: () => undefined,
-					verify: () => {
-						throw primary;
-					},
-					teardown: () => {
-						throw teardown;
-					},
-				}),
+test(
+	"verification failure retains teardown and release failures",
+	mint({
+		setup: () => ({
+			primary: new Error("primary"),
+			teardown: new Error("teardown"),
+			cleanup: new Error("cleanup"),
+		}),
+		exercise: ({ primary, teardown, cleanup }) =>
+			captureError(() =>
+				executeDefinition(
+					validateDefinition({
+						setup: async ({ scope }) => {
+							await scope.using(
+								"resource",
+								() => "resource",
+								() => {
+									throw cleanup;
+								},
+							);
+							return undefined;
+						},
+						exercise: () => undefined,
+						verify: () => {
+							throw primary;
+						},
+						teardown: () => {
+							throw teardown;
+						},
+					}),
+				),
 			),
-		),
-	verify: (error, { primary, teardown, cleanup }) => {
-		expect(aggregateError(error).errors).toEqual([primary, teardown, cleanup]);
-	},
-});
+		verify: (error, { primary, teardown, cleanup }) => {
+			expect(aggregateError(error).errors).toEqual([
+				primary,
+				teardown,
+				cleanup,
+			]);
+		},
+	}),
+);
 
-mintTest("deferred cleanup follows explicit teardown exactly once", {
-	setup: emptyCalls,
-	exercise: async (calls) => {
-		await executeDefinition(
-			validateDefinition({
-				setup: ({ scope }) => {
-					scope.defer("temporary directory", () =>
-						calls.push("remove directory"),
-					);
-					return { directory: "tmp/report" };
-				},
-				exercise: ({ directory }) => `${directory}/report.txt`,
-				verify: (path) => expect(path).toBe("tmp/report/report.txt"),
-				teardown: ({ directory }) => calls.push(`close:${directory}`),
-			}),
-		);
-		return calls;
-	},
-	verify: (calls) =>
-		expect(calls).toEqual(["close:tmp/report", "remove directory"]),
-});
+test(
+	"deferred cleanup follows explicit teardown exactly once",
+	mint({
+		setup: emptyCalls,
+		exercise: async (calls) => {
+			await executeDefinition(
+				validateDefinition({
+					setup: ({ scope }) => {
+						scope.defer("temporary directory", () =>
+							calls.push("remove directory"),
+						);
+						return { directory: "tmp/report" };
+					},
+					exercise: ({ directory }) => `${directory}/report.txt`,
+					verify: (path) => expect(path).toBe("tmp/report/report.txt"),
+					teardown: ({ directory }) => calls.push(`close:${directory}`),
+				}),
+			);
+			return calls;
+		},
+		verify: (calls) =>
+			expect(calls).toEqual(["close:tmp/report", "remove directory"]),
+	}),
+);
 
-mintTest(
+test(
 	"adapter callers share their signal with active phases while cleanup gets a fresh signal",
-	{
+	mint({
 		setup: (): { controller: AbortController; active: AbortSignal[] } => ({
 			controller: new AbortController(),
 			active: [],
@@ -283,12 +301,12 @@ mintTest(
 			expect(cleanup).not.toBe(controller.signal);
 			expect(cleanup?.aborted).toBe(false);
 		},
-	},
+	}),
 );
 
-mintTest(
+test(
 	"event sinks observe successful boundaries and remain observational when broken",
-	{
+	mint({
 		setup: emptyCalls,
 		exercise: async (events) => {
 			await executeDefinition(
@@ -330,12 +348,12 @@ mintTest(
 				"teardown:started",
 				"teardown:passed",
 			]),
-	},
+	}),
 );
 
-mintTest(
+test(
 	"event streams mark phases skipped after setup failure and still close cleanup",
-	{
+	mint({
 		setup: (): { events: string[] } => ({ events: [] }),
 		exercise: async ({ events }) => {
 			await captureError(() =>
@@ -366,28 +384,31 @@ mintTest(
 				"verify:skipped",
 				"teardown:passed",
 			]),
-	},
+	}),
 );
 
-mintTest("a producer sequence remains monotonic across separate attempts", {
-	setup: (): { sequences: number[] } => ({ sequences: [] }),
-	exercise: async ({ sequences }) => {
-		let nextSequence = 0;
-		const options = {
-			nextEventSequence: () => nextSequence++,
-			sink: {
-				emit: (event: { seq: number }) => void sequences.push(event.seq),
-			},
-		};
-		const definition = validateDefinition({
-			setup: () => undefined,
-			exercise: () => undefined,
-			verify: () => undefined,
-		});
-		await executeDefinition(definition, options);
-		await executeDefinition(definition, options);
-		return sequences;
-	},
-	verify: (sequences) =>
-		expect(sequences).toEqual(sequences.map((_sequence, index) => index)),
-});
+test(
+	"a producer sequence remains monotonic across separate attempts",
+	mint({
+		setup: (): { sequences: number[] } => ({ sequences: [] }),
+		exercise: async ({ sequences }) => {
+			let nextSequence = 0;
+			const options = {
+				nextEventSequence: () => nextSequence++,
+				sink: {
+					emit: (event: { seq: number }) => void sequences.push(event.seq),
+				},
+			};
+			const definition = validateDefinition({
+				setup: () => undefined,
+				exercise: () => undefined,
+				verify: () => undefined,
+			});
+			await executeDefinition(definition, options);
+			await executeDefinition(definition, options);
+			return sequences;
+		},
+		verify: (sequences) =>
+			expect(sequences).toEqual(sequences.map((_sequence, index) => index)),
+	}),
+);

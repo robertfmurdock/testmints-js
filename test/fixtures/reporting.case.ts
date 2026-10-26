@@ -1,9 +1,12 @@
-import { expect } from "vitest";
+import { expect, test } from "vitest";
 
-import { mintTest } from "../../src/vitest.js";
+import { mint } from "../../src/vitest.js";
 
-mintTest("writes an inspectable phase timeline", {
-	setup: () => 2,
-	exercise: (input) => input * 3,
-	verify: (output) => expect(output).toBe(6),
-});
+test(
+	"writes an inspectable phase timeline",
+	mint({
+		setup: () => 2,
+		exercise: (input) => input * 3,
+		verify: (output) => expect(output).toBe(6),
+	}),
+);

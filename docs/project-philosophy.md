@@ -7,8 +7,9 @@ the broader product direction; these are the values that should be visible in th
 
 Every test should be a realistic, readable example of using Testmints and evidence that the behavior
 is desirable. Test names describe a user-visible scenario or an intentional contract, not the test
-harness. All runtime tests use `mintTest` unless that is genuinely impossible; calls to lower-level
-core APIs belong inside a `mintTest` phase when those APIs are the behavior under evidence.
+harness. All runtime tests visibly register with Vitest using `test(name, mint(definition))` unless
+that is genuinely impossible; calls to lower-level core APIs belong inside a `mint` phase when
+those APIs are the behavior under evidence.
 
 Prefer linear setup, exercise, verification, and teardown. Keep assertions in `verify` whenever the
 scenario permits it. A test can have several assertions when they describe one scenario; do not

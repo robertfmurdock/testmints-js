@@ -41,24 +41,31 @@ These principles put limits on the tool itself. It can enforce a complete test s
 
 ## What Writing a Test Looks Like
 
-The syntax below is a proposed API, not an existing published package. Example application functions stand in for the user's real code.
+The Vitest adapter below is implemented in the current package. Example application functions stand
+in for the user's real code.
 
 ### The smallest useful test
 
 ```ts
-import { expect } from 'vitest'
-import { mintTest } from '@testmints/vitest'
+import { expect, test } from 'vitest'
+import { mint } from '@testmints/vitest'
 
-mintTest('15 produces FizzBuzz', {
+test('15 produces FizzBuzz', mint({
   setup: () => 15,
   exercise: input => fizzBuzz(input),
   verify: output => {
     expect(output).toBe('FizzBuzz')
   },
-})
+}))
 ```
 
-There is no `.run()` to forget and no promise for the test author to return to the runner. `mintTest` synchronously registers the complete definition; its adapter supplies the awaited runner callback. Each execution, including a retry, calls setup afresh.
+There is no `.run()` to forget. Vitest visibly registers the test while `mint` synchronously
+validates the complete definition and supplies its awaited runner callback. Each execution,
+including a retry, calls setup afresh.
+
+For the occasional test that benefits from an explicit callback, use
+`test(name, context => runMint(definition, context))`. The callback factory remains the normal
+form; it keeps validation at collection time and the scenario definition visually compact.
 
 The exercise visibly uses the feature. Expected output appears in verification, not among inputs. The example is also valid JavaScript after changing the file extension; TypeScript users get inferred input and result types.
 
@@ -67,11 +74,11 @@ The assertion import is independent of the runner. This is equally valid with th
 ```ts
 import assert from 'node:assert/strict'
 
-mintTest('15 produces FizzBuzz', {
+test('15 produces FizzBuzz', mint({
   setup: () => 15,
   exercise: input => fizzBuzz(input),
   verify: output => assert.equal(output, 'FizzBuzz'),
-})
+}))
 ```
 
 No assertion integration is required. A hand-written check that throws on mismatch also works.
@@ -95,7 +102,7 @@ async function captureOutcome<T>(
   }
 }
 
-mintTest('an expired token is rejected', {
+test('an expired token is rejected', mint({
   setup: () => ({ token: 'expired-token' }),
   exercise: ({ token }) => captureOutcome(() => authenticate(token)),
   verify: outcome => {
@@ -103,7 +110,7 @@ mintTest('an expired token is rejected', {
     if (outcome.ok) throw new Error('Expected authentication to fail')
     expect(outcome.error).toBeInstanceOf(TokenExpiredError)
   },
-})
+}))
 ```
 
 The thunk lets the same helper capture a synchronous throw or a promise rejection; success carries the returned value. Assertions stay in verification, and an unexpected success fails there. This is ordinary user code, with no assertion-library integration. Only the wrapped operation becomes data: an uncaptured exercise throw or rejection still skips verification and triggers cleanup. Capturing an outcome does not own detached work.
@@ -111,7 +118,7 @@ The thunk lets the same helper capture a synchronous throw or a promise rejectio
 ### Async resources, with cleanup paired with acquisition
 
 ```ts
-mintTest('a member can save their display name', {
+test('a member can save their display name', mint({
   setup: async ({ scope, signal }) => {
     const account = await scope.using(
       'temporary account',
@@ -127,7 +134,7 @@ mintTest('a member can save their display name', {
   verify: profile => {
     expect(profile.displayName).toBe('Ada')
   },
-})
+}))
 ```
 
 The release function is mandatory when using `scope.using`. Registering it is part of acquiring the resource, not a separate statement the author must remember. The account survives through verification and is deleted afterward, including on assertion failure. If a later setup operation fails, already acquired resources are still released.
@@ -137,7 +144,7 @@ Exercise returns its promise directly. An `async` callback with `await` is equal
 ### Resources created by exercise live through verification
 
 ```ts
-mintTest('an exported report contains the member name', {
+test('an exported report contains the member name', mint({
   setup: () => ({ memberName: 'Ada' }),
   exercise: ({ memberName }, { scope, signal }) => scope.using(
     'exported report',
@@ -147,7 +154,7 @@ mintTest('an exported report contains the member name', {
   verify: async report => {
     expect(await report.readText()).toContain('Ada')
   },
-})
+}))
 ```
 
 Exercise receives the same attempt scope as setup. The report remains readable throughout verification; `remove` runs afterward even if the assertion fails. A deliberately broken export should demonstrate both the native assertion failure and the subsequent release. Returning the resource from exercise alone would not register cleanup.
@@ -163,7 +170,7 @@ function withTestDatabase(scope: ResourceScope, signal: AbortSignal) {
   )
 }
 
-mintTest('a saved member can be found', {
+test('a saved member can be found', mint({
   setup: async ({ scope, signal }) => ({
     database: await withTestDatabase(scope, signal),
     member: { id: 'ada', name: 'Ada' },
@@ -173,16 +180,16 @@ mintTest('a saved member can be found', {
     return database.find(member.id)
   },
   verify: member => expect(member).toEqual({ id: 'ada', name: 'Ada' }),
-})
+}))
 
-mintTest('an unknown member is absent', {
+test('an unknown member is absent', mint({
   setup: async ({ scope, signal }) => ({
     database: await withTestDatabase(scope, signal),
     missingId: 'unknown-member',
   }),
   exercise: ({ database, missingId }) => database.find(missingId),
   verify: member => expect(member).toBeNull(),
-})
+}))
 ```
 
 Each attempt gets its own database and cleanup registration; scenario inputs stay in each test. The helper accepts ownership explicitly instead of hiding it in a global fixture. Suite-wide fixtures remain runner-owned: use runner facilities for their creation and disposal, and do not register a shared suite resource for release after each attempt.
@@ -190,7 +197,7 @@ Each attempt gets its own database and cleanup registration; scenario inputs sta
 ### Explicit teardown and side-effect verification
 
 ```ts
-mintTest('sending a welcome email uses the member address', {
+test('sending a welcome email uses the member address', mint({
   setup: () => ({
     member: { email: 'ada@example.test' },
     mailer: createRecordingMailer(),
@@ -202,7 +209,7 @@ mintTest('sending a welcome email uses the member address', {
     ])
   },
   teardown: ({ mailer }) => mailer.close(),
-})
+}))
 ```
 
 Exercise may legitimately return `undefined`; verification can inspect the setup context for observable side effects. Do not ban command-style APIs to make the generic signatures look tidier. Explicit teardown is supported, but for acquired resources the acquisition/release pairing above is the recommended default.
@@ -282,7 +289,7 @@ Resource ownership is justified here because teardown is a core phase and partia
 
 The database examples above are the primary reuse model: ordinary builders and helper functions. Omit a general template inheritance system from v1.
 
-For teams that require a configured test harness, expose one project-local `mintTest` import and provide an ESLint import restriction recipe for the relevant test directories. This addresses the retrospective's “forgot the mandatory template” problem at the project boundary. Runtime validation cannot discover that somebody imported the ordinary runner instead, so do not pretend it can.
+For teams that require a configured test harness, expose one project-local `mint` import and provide an ESLint import restriction recipe for the relevant test directories. This addresses the retrospective's “forgot the mandatory template” problem at the project boundary. Runtime validation cannot discover that somebody registered an ordinary runner callback instead, so do not pretend it can.
 
 ## Safe Async Support
 
@@ -323,7 +330,7 @@ Also evaluate work launched *inside the feature* through a dependency injected d
 
 ```ts
 // Optional prototype only: exerciseTasks and launch are provisional names.
-mintTest('saving a member updates the search index', {
+test('saving a member updates the search index', mint({
   setup: ({ exerciseTasks }) => {
     const index = createRecordingIndex()
     const service = createMemberService({
@@ -336,7 +343,7 @@ mintTest('saving a member updates the search index', {
   verify: (_result, { index }) => {
     expect(index.entries).toEqual([{ id: 'ada', name: 'Ada' }])
   },
-})
+}))
 ```
 
 In this spike, `service.save` uses the injected launcher to submit its index update. Setup receives a capability bound explicitly to the upcoming exercise, without a mutable global current phase. The proposed `SetupTools` extension is optional and absent from the baseline type sketch. Define when submission opens and closes: constructing the dependency during setup is allowed, launching exercise work during setup or after exercise closes is rejected. Work submitted while exercise is active remains owned even when the feature returns no task handle. Verification and the exercise-end event wait for all owned work. On callback or child failure, request cancellation, settle all owned children, skip verification, then clean up. Test submissions from running children and intentional rejection handling before choosing exact task APIs. Arbitrary work launched through other dependencies remains outside this guarantee.
