@@ -24,14 +24,21 @@ function mintUnknown(candidate: unknown) {
 	return mint(candidate);
 }
 
-test("mint validates malformed definitions when its callback is created", () => {
-	expect(() =>
-		mintUnknown({
-			setup: () => undefined,
-			exercise: () => undefined,
-		}),
-	).toThrow("Testmint definition requires a callable verify phase.");
-});
+test(
+	"mint validates malformed definitions when its callback is created",
+	mint({
+		setup: () => ({ setup: () => undefined, exercise: () => undefined }),
+		exercise: (definition) => captureOutcome(() => mintUnknown(definition)),
+		verify: (outcome) => {
+			expect(outcome.ok).toBe(false);
+			if (outcome.ok) throw new Error("Expected definition validation to fail");
+			expect(outcome.error).toBeInstanceOf(TypeError);
+			expect(outcome.error).toMatchObject({
+				message: "Testmint definition requires a callable verify phase.",
+			});
+		},
+	}),
+);
 
 test(
 	"ordinary Vitest assertions stay in verify",
@@ -110,8 +117,8 @@ test(
 					report.removed = true;
 				},
 			),
-		verify: (report) => {
-			expect(report.text).toContain("Ada");
+		verify: (report, { memberName }) => {
+			expect(report.text).toBe(`Member: ${memberName}`);
 			expect(report.removed).toBe(false);
 		},
 	}),
@@ -135,7 +142,7 @@ test(
 						mailer.messages.push(`Welcome ${member.email}`);
 					},
 					verify: (_output, { mailer }) =>
-						expect(mailer.messages).toEqual(["Welcome ada@example.test"]),
+						expect(mailer.messages).toEqual([`Welcome ${member.email}`]),
 					teardown: async ({ mailer }) => {
 						await new Promise<void>((resolve) => setTimeout(resolve, 0));
 						mailer.closed = true;
@@ -144,13 +151,14 @@ test(
 			);
 			return mailer;
 		},
-		verify: (mailer) => {
-			expect(mailer.messages).toEqual(["Welcome ada@example.test"]);
+		verify: (mailer, { member }) => {
+			expect(mailer.messages).toEqual([`Welcome ${member.email}`]);
 			expect(mailer.closed).toBe(true);
 		},
 	}),
 );
 
+// This public API accepts the runner-owned context, which the native callback supplies.
 test("explicit execution uses the active Vitest context", async (context) => {
 	await runMint(
 		{

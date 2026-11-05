@@ -15,8 +15,25 @@ Prefer linear setup, exercise, verification, and teardown. Keep assertions in `v
 scenario permits it. A test can have several assertions when they describe one scenario; do not
 split or combine tests merely to satisfy an assertion-count rule.
 
+Phase names make semantic claims, not just sections. Identify the feature-owning subject before
+assigning phases. When the boundaries are incoherent, reconsider ownership: split distinct
+scenarios, consolidate duplicate evidence, or move a contract into the test that already owns it.
+Successful use of the syntax is not proof that those questions have been resolved.
+
+One scenario has one visible subject action; repeat execution when repetition is itself the
+contract. Arrange meaningful inputs once and carry them through exercise into verification rather
+than restating them as disconnected literals. Helpers may arrange reusable worlds or name stable
+assertions, but should leave the subject action visible.
+
 Tests are release evidence, not coverage theater. Test the real public behavior at the narrowest
 meaningful interface. Avoid tests that merely repeat implementation structure or source text.
+
+For a regression, reproduce the known-bad behavior through the closest meaningful interface before
+changing the implementation, then run the same evidence green. For a new or materially changed
+behavioral contract, name a concrete broken implementation the test must detect and demonstrate
+that it does, using a small reversible fault when practical. Confirm that the intended observable
+assertion fails, not merely setup or an unrelated gate. If the real boundary cannot be exercised,
+record the limitation and the nearest representative evidence.
 
 ## Make tests easy to read and hard to accidentally bypass
 
@@ -43,6 +60,13 @@ Resources acquired with `scope.using()` remain available through verification an
 reverse acquisition order. Pair acquisition and release at the same point. Use `scope.defer()` only
 when there is no natural acquired resource to pair with cleanup. Preserve the primary failure and
 retain teardown/release failures rather than hiding them.
+
+Keep shared restoration in ordinary runner lifecycle hooks. Scoped cleanup is for resources owned
+by one scenario; adopting Testmints does not require repeating suite cleanup in every setup.
+
+Await the subject's completion, or use a bounded wait for its observable result when completion is
+not directly available. A tick, event-loop pump, or advance of controlled time does not establish
+completion of unrelated asynchronous work. Keep actions outside retrying assertion callbacks.
 
 Make narrow guarantees and prove them. Awaiting a phase cannot discover arbitrary detached promises
 or forcibly stop ignored work; do not imply otherwise. A public capability should have a concrete,

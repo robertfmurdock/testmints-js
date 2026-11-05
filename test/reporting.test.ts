@@ -40,16 +40,15 @@ async function captureInspector(directory: string) {
 }
 
 test(
-	"the Vitest plugin writes one complete inspectable event stream",
+	"the Vitest plugin writes one complete phase and runner event stream",
 	mint({
-		setup: ({ scope }) => {
+		setup: async ({ scope }) => {
 			scope.defer("fixture artifacts", () =>
 				rm(artifactRoot, { recursive: true, force: true }),
 			);
-			return undefined;
+			await rm(artifactRoot, { recursive: true, force: true });
 		},
 		exercise: async () => {
-			await rm(artifactRoot, { recursive: true, force: true });
 			return run(process.execPath, [
 				"node_modules/vitest/vitest.mjs",
 				"run",
@@ -100,14 +99,6 @@ test(
 			expect(
 				runnerEvents.map((event) => `${event.kind}:${event.status}`),
 			).toEqual(["runner.result:passed"]);
-			const inspection = await captureInspector(runDirectory);
-			expect(inspection.exitCode).toBe(0);
-			expect(inspection.lines).toContain(
-				"test/fixtures/reporting.case.ts > writes an inspectable phase timeline — passed",
-			);
-			expect(
-				inspection.lines.filter((line) => line.includes("passed")),
-			).toHaveLength(5);
 		},
 	}),
 );
@@ -115,14 +106,12 @@ test(
 test(
 	"a producer write failure makes the run manifest incomplete",
 	mint({
-		setup: ({ scope }) => {
+		setup: async ({ scope }) => {
 			const outputDir = resolve(".testmints-health-fixture");
 			scope.defer("health fixture artifacts", () =>
 				rm(outputDir, { recursive: true, force: true }),
 			);
-			return { outputDir, runId: "run-health" };
-		},
-		exercise: async (context) => {
+			const context = { outputDir, runId: "run-health" };
 			await startManifest(context);
 			const events = resolve(context.outputDir, context.runId, "events");
 			await mkdir(events, { recursive: true });
@@ -131,24 +120,32 @@ test(
 				`producer-${process.pid}-${threadId}.ndjson`,
 			);
 			await mkdir(blockedFile);
-			const sink = new NdjsonEventSink(context);
-			await expect(
-				sink.emit({
-					v: 1,
-					kind: "attempt.start",
-					runId: context.runId,
-					producerId: "test-producer",
-					attemptId: "test-attempt",
-					testId: "test-id",
-					title: "test title",
-					seq: 0,
-					timestamp: new Date().toISOString(),
-				}),
-			).rejects.toBeDefined();
-			await completeManifest(context, "complete");
-			return readManifest(resolve(context.outputDir, context.runId));
+			return { context, sink: new NdjsonEventSink(context) };
 		},
-		verify: (manifest) => {
+		exercise: async ({ context, sink }) => {
+			const emission = sink.emit({
+				v: 1,
+				kind: "attempt.start",
+				runId: context.runId,
+				producerId: "test-producer",
+				attemptId: "test-attempt",
+				testId: "test-id",
+				title: "test title",
+				seq: 0,
+				timestamp: new Date().toISOString(),
+			});
+			const error = await emission.then(
+				() => undefined,
+				(error: unknown) => error,
+			);
+			await completeManifest(context, "complete");
+			return {
+				error,
+				manifest: await readManifest(resolve(context.outputDir, context.runId)),
+			};
+		},
+		verify: ({ error, manifest }) => {
+			expect(error).toBeDefined();
 			expect(manifest.status).toBe("incomplete");
 			expect(manifest.failureFiles).toEqual([
 				`producer-${process.pid}-${threadId}.failure.json`,
@@ -157,47 +154,73 @@ test(
 	}),
 );
 
-test(
-	"the inspector shows failed verification and successful teardown",
-	mint({
-		setup: ({ scope }) => {
-			scope.defer("failure fixture artifacts", () =>
-				rm(artifactRoot, { recursive: true, force: true }),
-			);
-			return undefined;
-		},
-		exercise: async () => {
-			await rm(artifactRoot, { recursive: true, force: true });
-			return captureRun([
-				"node_modules/vitest/vitest.mjs",
-				"run",
-				"test/fixtures/reporting.failed.case.ts",
-				"--config",
-				"test/fixtures/reporting.config.ts",
-			]);
-		},
-		verify: async (outcome) => {
-			expect(outcome.passed).toBe(false);
-			const runs = await readdir(artifactRoot);
-			expect(runs).toHaveLength(1);
-			const inspection = await captureInspector(
-				resolve(artifactRoot, runs[0] ?? ""),
-			);
-			expect(inspection.exitCode).toBe(1);
-			expect(inspection.lines).toContain(
-				"test/fixtures/reporting.failed.case.ts > shows verification failure after an exported report is created — FAILED",
-			);
-			expect(
-				inspection.lines.some(
-					(line) =>
-						line.includes("verify") && line.includes("failed — expected"),
-				),
-			).toBe(true);
-			expect(
-				inspection.lines.some(
-					(line) => line.includes("teardown") && line.includes("passed"),
-				),
-			).toBe(true);
-		},
-	}),
-);
+for (const scenario of [
+	{
+		name: "the inspector shows passed verification and successful teardown",
+		fixture: "test/fixtures/reporting.case.ts",
+		passed: true,
+		title: "writes an inspectable phase timeline",
+		status: "passed",
+		verification: "passed",
+	},
+	{
+		name: "the inspector shows failed verification and successful teardown",
+		fixture: "test/fixtures/reporting.failed.case.ts",
+		passed: false,
+		title: "shows verification failure after an exported report is created",
+		status: "FAILED",
+		verification: "failed — expected",
+	},
+]) {
+	test(
+		scenario.name,
+		mint({
+			setup: async ({ scope }) => {
+				scope.defer("inspector fixture artifacts", () =>
+					rm(artifactRoot, { recursive: true, force: true }),
+				);
+				await rm(artifactRoot, { recursive: true, force: true });
+				const outcome = await captureRun([
+					"node_modules/vitest/vitest.mjs",
+					"run",
+					scenario.fixture,
+					"--config",
+					"test/fixtures/reporting.config.ts",
+				]);
+				const runs = await readdir(artifactRoot);
+				if (outcome.passed !== scenario.passed || runs.length !== 1)
+					throw new Error(
+						"Inspector fixture did not produce the expected runner outcome and run directory.",
+					);
+				return { directory: resolve(artifactRoot, runs[0] ?? ""), scenario };
+			},
+			exercise: ({ directory }) => captureInspector(directory),
+			verify: (inspection, { scenario }) => {
+				expect(inspection.lines).toHaveLength(5);
+				for (const phase of ["setup", "exercise"]) {
+					expect(
+						inspection.lines.some(
+							(line) =>
+								line.trimStart().startsWith(phase) && line.includes("passed"),
+						),
+					).toBe(true);
+				}
+				expect(inspection.exitCode).toBe(Number(!scenario.passed));
+				expect(inspection.lines).toContain(
+					`${scenario.fixture} > ${scenario.title} — ${scenario.status}`,
+				);
+				expect(
+					inspection.lines.some(
+						(line) =>
+							line.includes("verify") && line.includes(scenario.verification),
+					),
+				).toBe(true);
+				expect(
+					inspection.lines.some(
+						(line) => line.includes("teardown") && line.includes("passed"),
+					),
+				).toBe(true);
+			},
+		}),
+	);
+}

@@ -27,13 +27,26 @@ try {
 	await writeFile(
 		resolve(directory, "verify.mjs"),
 		[
-			'import { executeDefinition } from "@continuous-excellence/testmints-js";',
+			'import assert from "node:assert/strict";',
+			'import { executeDefinition, validateDefinition } from "@continuous-excellence/testmints-js";',
 			'import { mint as vitestMint } from "@continuous-excellence/testmints-js/vitest";',
 			'import { mint } from "@continuous-excellence/testmints-js/playwright";',
 			'import TestmintsPlaywrightReporter from "@continuous-excellence/testmints-js/playwright/reporter";',
 			'if (typeof executeDefinition !== "function" || typeof vitestMint !== "function" || typeof mint !== "function" || typeof TestmintsPlaywrightReporter !== "function") {',
 			'  throw new Error("Published exports are unavailable.");',
 			"}",
+			"const calls = [];",
+			"await executeDefinition(validateDefinition({",
+			"  setup: async ({ scope }) => {",
+			"    await scope.using('consumer resource', () => 21, () => calls.push('release'));",
+			"    calls.push('setup');",
+			"    return 21;",
+			"  },",
+			"  exercise: async (input) => { calls.push('exercise'); return input * 2; },",
+			"  verify: (output) => { assert.equal(output, 42); calls.push('verify'); },",
+			"  teardown: () => { calls.push('teardown'); },",
+			"}));",
+			"assert.deepEqual(calls, ['setup', 'exercise', 'verify', 'teardown', 'release']);",
 		].join("\n"),
 	);
 	await exec(process.execPath, [resolve(directory, "verify.mjs")], {
