@@ -1,5 +1,7 @@
 // noinspection SpellCheckingInspection
 
+import { setTimeout as delay } from "node:timers/promises";
+
 import { expect, test } from "vitest";
 
 import { executeDefinition, validateDefinition } from "../src/index.js";
@@ -96,17 +98,22 @@ test(
 			await executeDefinition(
 				validateDefinition({
 					setup: async () => {
+						await delay(0);
 						calls.push("setup");
 						return 2;
 					},
 					exercise: async (input) => {
+						await delay(0);
 						calls.push(`exercise:${input}`);
 						return input * 3;
 					},
 					verify: async (output, input) => {
+						await delay(0);
 						calls.push(`verify:${input}:${output}`);
 					},
 					teardown: async (input) => {
+						calls.push("teardown started");
+						await delay(0);
 						calls.push(`teardown:${input}`);
 					},
 				}),
@@ -118,6 +125,7 @@ test(
 				"setup",
 				"exercise:2",
 				"verify:2:6",
+				"teardown started",
 				"teardown:2",
 			]),
 	}),
@@ -408,7 +416,50 @@ test(
 			await executeDefinition(definition, options);
 			return sequences;
 		},
-		verify: (sequences) =>
-			expect(sequences).toEqual(sequences.map((_sequence, index) => index)),
+		verify: (sequences) => {
+			expect(sequences).toHaveLength(20);
+			expect(sequences).toEqual(sequences.map((_sequence, index) => index));
+		},
+	}),
+);
+
+test(
+	"a broken event sink preserves the original verification failure and awaited resource cleanup",
+	mint({
+		setup: (): { primary: Error; releases: string[] } => ({
+			primary: new Error("verification failed"),
+			releases: [],
+		}),
+		exercise: async ({ primary, releases }) =>
+			captureError(() =>
+				executeDefinition(
+					validateDefinition({
+						setup: async ({ scope }) =>
+							scope.using(
+								"account",
+								() => "Ada",
+								async (account) => {
+									await delay(0);
+									releases.push(account);
+								},
+							),
+						exercise: (account) => account,
+						verify: () => {
+							throw primary;
+						},
+					}),
+					{
+						sink: {
+							emit: async () => {
+								throw new Error("reporting unavailable");
+							},
+						},
+					},
+				),
+			),
+		verify: (error, { primary, releases }) => {
+			expect.soft(error).toBe(primary);
+			expect.soft(releases).toEqual(["Ada"]);
+		},
 	}),
 );

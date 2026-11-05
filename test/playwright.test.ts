@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
-import { readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
-
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
+import { inspect } from "../src/cli.js";
 
 import { mint } from "../src/vitest.js";
 
@@ -29,12 +30,36 @@ test(
 			]);
 		},
 		verify: async () => {
-			const runs = await readdir(artifactRoot);
+			const runs = (await readdir(artifactRoot)).filter((entry) =>
+				entry.startsWith("run-"),
+			);
 			expect(runs).toHaveLength(1);
 			const runDirectory = resolve(artifactRoot, runs[0] ?? "");
 			const manifest = JSON.parse(
 				await readFile(resolve(runDirectory, "manifest.json"), "utf8"),
 			) as { status: string; producerFiles: string[] };
+			interface NativeSuite {
+				suites?: NativeSuite[];
+				specs?: {
+					title: string;
+					tests: { results: { steps?: { title: string }[] }[] }[];
+				}[];
+			}
+			const native = JSON.parse(
+				await readFile(resolve(artifactRoot, "native.json"), "utf8"),
+			) as NativeSuite;
+			function specs(suite: NativeSuite): NonNullable<NativeSuite["specs"]> {
+				return [...(suite.specs ?? []), ...(suite.suites ?? []).flatMap(specs)];
+			}
+			const nativeScenario = specs(native).find(
+				(spec) =>
+					spec.title ===
+					"the Playwright adapter awaits setup, exercise, verify, and teardown in order",
+			);
+			expect(nativeScenario).toBeDefined();
+			expect(
+				nativeScenario?.tests[0]?.results[0]?.steps?.map((step) => step.title),
+			).toEqual(["setup", "exercise", "verify", "teardown"]);
 			expect(manifest.status).toBe("complete");
 			const events = (
 				await readFile(
@@ -76,6 +101,7 @@ test(
 				sequences.push(event.seq);
 				sequencesByProducer.set(event.producerId, sequences);
 			}
+			expect(sequencesByProducer.size).toBeGreaterThan(0);
 			for (const sequences of sequencesByProducer.values()) {
 				expect(sequences).toEqual(sequences.map((_sequence, index) => index));
 			}
@@ -152,3 +178,96 @@ test(
 		},
 	}),
 );
+
+for (const scenario of ["timeout", "interruption"]) {
+	test(
+		`a Playwright ${scenario} keeps the runner failure and exposes incomplete artifacts`,
+		mint({
+			setup: async ({ scope }) =>
+				scope.using(
+					"stopped run artifacts",
+					() => mkdtemp(resolve(tmpdir(), "testmints-stopped-")),
+					(directory) => rm(directory, { recursive: true, force: true }),
+				),
+			exercise: async (directory) => {
+				const lifecycle = resolve(directory, "lifecycle.txt");
+				const outcome = await new Promise<{
+					code: number | string | null;
+					stdout: string;
+				}>((done) => {
+					const child = execFile(
+						process.execPath,
+						[
+							"node_modules/@playwright/test/cli.js",
+							"test",
+							"-c",
+							"test/playwright.stopped.config.ts",
+							"--grep",
+							`runner ${scenario}`,
+						],
+						{
+							env: {
+								...process.env,
+								TESTMINTS_LIFECYCLE_FILE: lifecycle,
+								TESTMINTS_STOPPED_OUTPUT: resolve(directory, "runs"),
+							},
+							timeout: 45_000,
+						},
+						(error, stdout) => done({ code: error?.code ?? 0, stdout }),
+					);
+					let output = "";
+					child.stdout?.on("data", (chunk: string) => {
+						output += chunk;
+						if (
+							scenario === "interruption" &&
+							output.includes("TESTMINTS_HANGING_EXERCISE")
+						) {
+							output = "";
+							child.kill("SIGINT");
+						}
+					});
+				});
+				const [runId] = await readdir(resolve(directory, "runs"));
+				const runDirectory = resolve(directory, "runs", runId ?? "");
+				const log = vi
+					.spyOn(console, "log")
+					.mockImplementation(() => undefined);
+				const warning = vi
+					.spyOn(console, "error")
+					.mockImplementation(() => undefined);
+				try {
+					const exitCode = await inspect(runDirectory);
+					return {
+						outcome,
+						lifecycle: await readFile(lifecycle, "utf8"),
+						manifest: JSON.parse(
+							await readFile(resolve(runDirectory, "manifest.json"), "utf8"),
+						),
+						runner: await readFile(
+							resolve(runDirectory, "events/runner.ndjson"),
+							"utf8",
+						),
+						exitCode,
+						lines: log.mock.calls.flat().join("\n"),
+						warnings: warning.mock.calls.flat().join("\n"),
+					};
+				} finally {
+					log.mockRestore();
+					warning.mockRestore();
+				}
+			},
+			verify: (result) => {
+				expect(result.outcome.code).toBe(scenario === "timeout" ? 1 : 130);
+				expect(result.lifecycle).toBe("acquired\nexercise\n");
+				expect(result.manifest.status).toBe("incomplete");
+				expect(result.runner).toContain('"status":"failed"');
+				if (scenario === "timeout")
+					expect(result.runner).toContain("Test timeout of 500ms exceeded");
+				expect(result.exitCode).toBe(1);
+				expect(result.lines).toContain(`runner ${scenario} — FAILED`);
+				expect(result.warnings).toContain("artifacts are incomplete");
+			},
+		}),
+		60_000,
+	);
+}

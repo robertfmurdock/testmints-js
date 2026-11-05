@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 
 import { expect, test } from "vitest";
 
+import { executeDefinition, validateDefinition } from "../src/index.js";
+
 import { mint, runMint } from "../src/vitest.js";
 
 type Outcome<T> = { ok: true; value: T } | { ok: false; error: unknown };
@@ -42,11 +44,26 @@ test(
 );
 
 test(
-	"Node assertions work without integration",
+	"Node assertion failures propagate without integration",
 	mint({
 		setup: () => ({ left: 20, right: 22 }),
-		exercise: ({ left, right }) => left + right,
-		verify: (output) => assert.equal(output, 42),
+		exercise: ({ left, right }) =>
+			captureOutcome(() =>
+				executeDefinition(
+					validateDefinition({
+						setup: () => ({ left, right }),
+						exercise: ({ left, right }) => left + right,
+						verify: (output) => assert.equal(output, 43),
+					}),
+				),
+			),
+		verify: (outcome) => {
+			// Record this with Vitest even if a broken executor swallows thrown assertions.
+			expect.soft(outcome.ok).toBe(false);
+			if (outcome.ok) throw new Error("Expected the Node assertion to fail");
+			expect.soft(outcome.error).toBeInstanceOf(assert.AssertionError);
+			expect.soft(outcome.error).toMatchObject({ actual: 42, expected: 43 });
+		},
 	}),
 );
 
@@ -74,7 +91,10 @@ test(
 		exercise: ({ messages }) => {
 			messages.push("welcome");
 		},
-		verify: (_output, { messages }) => expect(messages).toEqual(["welcome"]),
+		verify: (output, { messages }) => {
+			expect(output).toBeUndefined();
+			expect(messages).toEqual(["welcome"]);
+		},
 	}),
 );
 
@@ -107,13 +127,25 @@ test(
 			member: { email: "ada@example.test" },
 			mailer: { messages: [], closed: false },
 		}),
-		exercise: ({ member, mailer }) => {
-			mailer.messages.push(`Welcome ${member.email}`);
+		exercise: async ({ member, mailer }) => {
+			await executeDefinition(
+				validateDefinition({
+					setup: () => ({ member, mailer }),
+					exercise: ({ member, mailer }) => {
+						mailer.messages.push(`Welcome ${member.email}`);
+					},
+					verify: (_output, { mailer }) =>
+						expect(mailer.messages).toEqual(["Welcome ada@example.test"]),
+					teardown: async ({ mailer }) => {
+						await new Promise<void>((resolve) => setTimeout(resolve, 0));
+						mailer.closed = true;
+					},
+				}),
+			);
+			return mailer;
 		},
-		verify: (_output, { mailer }) =>
-			expect(mailer.messages).toEqual(["Welcome ada@example.test"]),
-		teardown: ({ mailer }) => {
-			mailer.closed = true;
+		verify: (mailer) => {
+			expect(mailer.messages).toEqual(["Welcome ada@example.test"]);
 			expect(mailer.closed).toBe(true);
 		},
 	}),
@@ -123,8 +155,11 @@ test("explicit execution uses the active Vitest context", async (context) => {
 	await runMint(
 		{
 			setup: () => 21,
-			exercise: (input) => input * 2,
-			verify: (output) => expect(output).toBe(42),
+			exercise: (input, { signal }) => ({ value: input * 2, signal }),
+			verify: (output) => {
+				expect(output.value).toBe(42);
+				expect(output.signal).toBe(context.signal);
+			},
 		},
 		context,
 	);

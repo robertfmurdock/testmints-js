@@ -92,12 +92,14 @@ export async function inspect(directory: string): Promise<number> {
 	}
 	let failed = false;
 	let interrupted = false;
+	const displayedTests = new Set<string>();
 	for (const attempt of attempts.values()) {
 		attempt.sort((left, right) => left.seq - right.seq);
 		const started = attempt.find((event) => event.kind === "attempt.start");
 		const ended = attempt.find((event) => event.kind === "attempt.end");
 		if (!started) continue;
 		if (!ended) interrupted = true;
+		displayedTests.add(started.testId);
 		const runner = runnerResults.get(started.testId);
 		const attemptFailed =
 			(ended?.kind === "attempt.end" && ended.status === "failed") ||
@@ -120,6 +122,17 @@ export async function inspect(directory: string): Promise<number> {
 			ended?.kind === "attempt.end" &&
 			ended.status === "passed"
 		) {
+			console.log(
+				`  runner              failed — ${runner.error?.message ?? "failed"}`,
+			);
+		}
+	}
+	for (const runner of runnerResults.values()) {
+		if (displayedTests.has(runner.testId)) continue;
+		const runnerFailed = runner.status === "failed";
+		failed ||= runnerFailed;
+		console.log(`${runner.title} — ${runnerFailed ? "FAILED" : runner.status}`);
+		if (runnerFailed) {
 			console.log(
 				`  runner              failed — ${runner.error?.message ?? "failed"}`,
 			);

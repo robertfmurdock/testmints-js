@@ -122,6 +122,9 @@ export class TestmintsPlaywrightReporter implements Reporter {
 	}
 
 	async onTestEnd(testCase: TestCase, result: TestResult): Promise<void> {
+		if (result.status === "timedOut" || result.status === "interrupted") {
+			this.#incomplete = true;
+		}
 		try {
 			const eventAttachment = attachment(result);
 			if (eventAttachment?.path !== undefined) {
@@ -140,11 +143,6 @@ export class TestmintsPlaywrightReporter implements Reporter {
 						title: title(testCase),
 					} as Parameters<EventSink["emit"]>[0]);
 				}
-			} else if (
-				result.status === "timedOut" ||
-				result.status === "interrupted"
-			) {
-				this.#incomplete = true;
 			}
 			await appendRunnerResult(this.#context, {
 				testId: testCase.id,

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { test as base, expect } from "@playwright/test";
 
@@ -45,31 +46,44 @@ test("definition validation rejects malformed definitions as the test begins", a
 	).rejects.toThrow("Testmint definition requires a callable verify phase.");
 });
 
-test("the Playwright adapter awaits setup, exercise, verify, and teardown in order", () => {
+test("the Playwright adapter awaits setup, exercise, verify, and teardown in order", async () => {
 	const calls: string[] = [];
-	return mint({
+	await mint({
 		setup: async () => {
+			await delay(0);
 			calls.push("setup");
 			return 2;
 		},
 		exercise: async (input) => {
+			await delay(0);
 			calls.push(`exercise:${input}`);
 			return input * 3;
 		},
-		verify: (output, input) => {
+		verify: async (output, input) => {
+			await delay(0);
 			calls.push(`verify:${input}:${output}`);
 			expect(calls).toEqual(["setup", "exercise:2", "verify:2:6"]);
 		},
-		teardown: (input) => {
+		teardown: async (input) => {
+			calls.push("teardown started");
+			await delay(0);
 			calls.push(`teardown:${input}`);
 			expect(calls).toEqual([
 				"setup",
 				"exercise:2",
 				"verify:2:6",
+				"teardown started",
 				"teardown:2",
 			]);
 		},
 	});
+	expect(calls).toEqual([
+		"setup",
+		"exercise:2",
+		"verify:2:6",
+		"teardown started",
+		"teardown:2",
+	]);
 });
 
 test("a setup failure skips later phases and releases owned resources in reverse order", async () => {
@@ -204,7 +218,10 @@ test("command-style exercises can return undefined", () =>
 		exercise: ({ messages }) => {
 			messages.push("welcome");
 		},
-		verify: (_output, { messages }) => expect(messages).toEqual(["welcome"]),
+		verify: (output, { messages }) => {
+			expect(output).toBeUndefined();
+			expect(messages).toEqual(["welcome"]);
+		},
 	}));
 
 test("an acquired resource stays available through verification", () =>

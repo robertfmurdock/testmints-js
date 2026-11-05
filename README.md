@@ -109,6 +109,9 @@ test('a visitor sees a greeting', ({ page, greeting }) =>
 `mint` validates as the Playwright test begins. The implicit-return arrow keeps its promise visible
 to the runner. Playwright does not provide a public cancellation signal; Testmints therefore
 preserves its hard timeout and can only run cleanup when the runner returns control to the callback.
+If a phase never settles, a hard timeout or runner interruption can stop the worker before Testmints
+runs teardown or releases owned resources. The reporter marks those runs incomplete and preserves
+the runner outcome; `testmints inspect` shows the failure even when no phase stream was attached.
 
 Add the reporter to `playwright.config.ts` to aggregate attached phase streams under `.testmints`:
 
