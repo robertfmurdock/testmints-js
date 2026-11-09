@@ -5,6 +5,7 @@ import {
 	bindTemplate,
 	createTemplate,
 	executeDefinition,
+	type SetupTools,
 	type SharedTools,
 } from "../src/core.js";
 import { createMint, mint } from "../src/vitest.js";
@@ -109,8 +110,8 @@ test.describe("a suite owns a shared service and its specialized mints", () => {
 				await dispose();
 				expect(events).toEqual([
 					"open service",
-					"open admin connection",
 					"start member session",
+					"open admin connection",
 					"start admin session",
 					"end admin session",
 					"end member session",
@@ -185,6 +186,54 @@ function gate() {
 }
 
 // These cases drive individual attempts to control overlap, failure, and cancellation.
+test(
+	"a failed admin connection still collects diagnostics and closes the member session",
+	mint({
+		setup: () => {
+			const unavailable = new Error("admin service unavailable");
+			const events: string[] = [];
+			const memberTemplate = bindTemplate({
+				shared: () => ({ token: "member-token" }),
+				attempt: {
+					before: (_credentials: unknown, { scope }: SetupTools) =>
+						scope.using(
+							"member session",
+							() => events.push("open member session"),
+							() => events.push("close member session"),
+						),
+					after: () => events.push("collect member diagnostics"),
+				},
+			});
+			const adminTemplate = memberTemplate.extend({
+				shared: () => {
+					events.push("connect to admin service");
+					throw unavailable;
+				},
+				attempt: { before: () => events.push("open admin session") },
+			});
+			const scenario = adminTemplate.bind({
+				setup: () => events.push("open admin profile"),
+				exercise: () => undefined,
+				verify: () => undefined,
+			});
+			return { unavailable, events, scenario };
+		},
+		exercise: ({ scenario }) =>
+			Promise.allSettled([executeDefinition(scenario)]),
+		verify: ([outcome], { unavailable, events }) => {
+			expect(events).toEqual([
+				"open member session",
+				"connect to admin service",
+				"collect member diagnostics",
+				"close member session",
+			]);
+			expect(outcome?.status === "rejected" && outcome.reason).toBe(
+				unavailable,
+			);
+		},
+	}),
+);
+
 test(
 	"disposal lets an active attempt finish cleanup and rejects new attempts",
 	mint({

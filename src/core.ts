@@ -405,10 +405,10 @@ class TemplateLifetime {
 	}
 
 	async #enter(tools: SetupTools): Promise<unknown> {
-		const shared = await this.#prepare();
-		tools.signal.throwIfAborted();
 		const parent =
 			this.parent === undefined ? [] : [await this.parent.#enter(tools)];
+		tools.signal.throwIfAborted();
+		const shared = await this.#prepare();
 		tools.signal.throwIfAborted();
 		const { hooks } = this.#initializer;
 		if (hooks === undefined) return shared;

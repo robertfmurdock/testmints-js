@@ -156,10 +156,11 @@ in the fixture's `finally` block after `await use(configuredMint)`. Both runners
 failures through their native teardown. A module import supplies no runner lifecycle boundary.
 
 Disposal rejects new attempts, lets admitted attempts finish preparation and cleanup, and releases
-shared resources once in reverse acquisition order. Closing an unused mint leaves preparation
-lazy. A failed initializer rolls back partial acquisitions immediately and caches the failure,
-including any rollback failures. Abrupt worker termination can prevent cleanup. Call or register
-disposal from the owner outside the mint's own attempts because disposal waits for those attempts.
+shared resources once, in reverse acquisition order within each scope. Closing an unused mint
+leaves preparation lazy. A failed initializer rolls back partial acquisitions immediately and
+caches the failure, including any rollback failures. Abrupt worker termination can prevent cleanup.
+Call or register disposal from the owner outside the mint's own attempts because disposal waits
+for those attempts.
 
 ### Composition
 
@@ -182,6 +183,11 @@ const adminMint = profileServiceMint.extend({
 })
 ```
 
-When a child defines both `shared` and `attempt`, its `before` receives the child shared value,
-setup tools, and the parent attempt context. Hooks enter parent first and unwind child first.
-Disposal closes descendants before their parent. Calling `adminMint.dispose()` closes that subtree.
+Each layer waits for its own shared value and runs its `before` hook before entering the next
+layer. The parent's attempt therefore surrounds the child's shared preparation as well as its
+hooks. If the child initializer fails, completed parent hooks still unwind and their attempt
+resources close. When a child defines both `shared` and `attempt`, its `before` receives the child
+shared value, setup tools, and the parent attempt context. Attempt cleanup unwinds child first.
+
+Disposal closes descendants before their parent and sibling subtrees in reverse extension order.
+Calling `adminMint.dispose()` closes that subtree.

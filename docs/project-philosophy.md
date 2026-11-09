@@ -103,4 +103,5 @@ plainly and add the capability only when its lifecycle, errors, and examples are
 
 Keep the implementation small and readable: name important intermediate concepts, isolate runtime
 boundary checks, avoid clever branching, and refactor repeated test-harness mechanics into clear
-helpers. Run `npm run check` before declaring a change complete.
+helpers. Run `npm run check` before declaring changes to code, tests, or build configuration
+complete. For reviews, planning, and prose-only edits, run checks when they help answer the task.
