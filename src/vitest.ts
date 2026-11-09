@@ -83,13 +83,13 @@ export function mint<Input, Output>(
 }
 
 /** Configure a mint with lazy shared preparation, per-attempt hooks, or both. */
-export function createMint<Shared, Context>(
+export function createMint<Shared, Context, Registration = unknown>(
 	options: HookedMintTemplateOptions<Shared, Context, [SharedTools]>,
-	registerDisposal: RegisterDisposal,
+	registerDisposal: RegisterDisposal<Registration>,
 ): ConfiguredMint<Shared, Context, true, TestFunction>;
-export function createMint<Shared>(
+export function createMint<Shared, Registration = unknown>(
 	options: MintTemplateOptions<Shared, [SharedTools]>,
-	registerDisposal: RegisterDisposal,
+	registerDisposal: RegisterDisposal<Registration>,
 ): ConfiguredMint<Shared, Shared, true, TestFunction>;
 export function createMint<Shared, Context>(
 	options: HookedMintTemplateOptions<Shared, Context>,
@@ -97,9 +97,9 @@ export function createMint<Shared, Context>(
 export function createMint<Shared>(
 	options: MintTemplateOptions<Shared>,
 ): ConfiguredMint<Shared, Shared, false, TestFunction>;
-export function createMint<Context>(
+export function createMint<Context, Registration = unknown>(
 	options: AttemptOnlyMintTemplateOptions<Context>,
-	registerDisposal: RegisterDisposal,
+	registerDisposal: RegisterDisposal<Registration>,
 ): ConfiguredMint<undefined, Context, true, TestFunction>;
 export function createMint<Context>(
 	options: AttemptOnlyMintTemplateOptions<Context>,

@@ -102,6 +102,16 @@ function checkPlaywrightTemplateTypes() {
 }
 void checkPlaywrightTemplateTypes;
 
+function checkDisposalRegistrarTypes() {
+	const options = { shared: () => ({ port: 3000 }) };
+	const asyncRegistration = async () => {};
+	// @ts-expect-error Vitest requires disposal registration during mint creation.
+	createMint(options, asyncRegistration);
+	// @ts-expect-error Playwright requires disposal registration during mint creation.
+	createPlaywrightMint(options, asyncRegistration);
+}
+void checkDisposalRegistrarTypes;
+
 const profileSessionMint = createMint(
 	{
 		attempt: {

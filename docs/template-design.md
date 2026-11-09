@@ -66,6 +66,8 @@ Configured setup receives `(context, tools)`. The context comes from `shared` by
 the template's per-attempt `before` hook when configured. Setup chooses the data that flows into the
 remaining phases. Its tools and scoped resources belong to that attempt. Vitest validates each
 definition when creating the test callback. Playwright validates when the callback invokes mint.
+A template also validates option and hook names at creation or extension, so a typo surfaces
+before any attempt starts.
 A project that requires a particular configured import can enforce it with an import lint rule.
 
 ## Lifetime and concurrency
@@ -151,8 +153,8 @@ the primary failure.
 ### Disposal of cached resources
 
 Pass a disposal registrar as the second argument to `createMint` to give shared preparation a
-template-owned resource scope. Use `scope.using()` to pair acquisition with release. The registrar
-receives one async disposal callback when the mint is created. In Vitest, a suite can pass
+template-owned resource scope. Use `scope.using()` to pair acquisition with release. Register the
+async disposal callback synchronously during mint creation. In Vitest, a suite can pass
 `afterAll` directly when it owns every test that uses the mint.
 
 ```ts

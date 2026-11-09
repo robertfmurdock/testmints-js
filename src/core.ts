@@ -138,7 +138,11 @@ export interface SharedTools {
 	readonly scope: ResourceScope;
 }
 
-export type RegisterDisposal = (dispose: () => Promise<void>) => void;
+// A plain void return type would also accept promise-returning callbacks.
+export type RegisterDisposal<Result = unknown> = ((
+	dispose: () => Promise<void>,
+) => Result) &
+	(Extract<Result, PromiseLike<unknown>> extends never ? unknown : never);
 
 export type ExtensionArgs<
 	Shared,
@@ -202,12 +206,26 @@ export interface ExecuteOptions {
 }
 
 const phaseKeys = new Set(["setup", "exercise", "verify", "teardown"]);
+const templateOptionKeys = new Set(["shared", "attempt"]);
+const attemptHookKeys = new Set(["before", "after"]);
 type UntypedCallback = (...arguments_: unknown[]) => unknown;
 
 function isDefinitionCandidate(
 	value: unknown,
 ): value is Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function validateKeys(
+	candidate: Record<string, unknown>,
+	allowed: ReadonlySet<string>,
+	kind: string,
+): void {
+	for (const key of Object.keys(candidate)) {
+		if (!allowed.has(key)) {
+			throw new TypeError(`Unknown Testmint ${kind} key: ${key}`);
+		}
+	}
 }
 
 function requiredCallback(
@@ -252,11 +270,7 @@ function validatePhases(
 	}
 
 	const definition = candidate;
-	for (const key of Object.keys(definition)) {
-		if (!phaseKeys.has(key)) {
-			throw new TypeError(`Unknown Testmint definition key: ${key}`);
-		}
-	}
+	validateKeys(definition, phaseKeys, "definition");
 	const setup = requiredCallback(definition, "setup");
 	const exercise = requiredCallback(definition, "exercise");
 	const verify = requiredCallback(definition, "verify");
@@ -304,12 +318,30 @@ export function bindTemplate(
 		registerDisposal !== undefined,
 	);
 	const binding = template.binding();
-	registerDisposal?.(binding.dispose);
+	const registration = registerDisposal?.(binding.dispose);
+	if (isPromiseLike(registration)) {
+		// Creation rejects the invalid registrar synchronously. Observe any later rejection.
+		void Promise.resolve(registration).catch(() => undefined);
+		throw new TypeError(
+			"A Testmint disposal registrar must register synchronously.",
+		);
+	}
 	return binding;
 }
 
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+	return (
+		((typeof value === "object" && value !== null) ||
+			typeof value === "function") &&
+		"then" in value &&
+		typeof value.then === "function"
+	);
+}
+
 function validateInitializer(options: unknown, isRoot: boolean) {
-	const { shared, attempt } = isDefinitionCandidate(options) ? options : {};
+	const candidate = isDefinitionCandidate(options) ? options : {};
+	validateKeys(candidate, templateOptionKeys, "template option");
+	const { shared, attempt } = candidate;
 	const hooks = validateAttemptHooks(attempt, isRoot && shared === undefined);
 	if (shared === undefined && hooks !== undefined) {
 		return { prepare: undefined, hooks };
@@ -453,7 +485,9 @@ class TemplateLifetime {
 
 function validateAttemptHooks(candidate: unknown, toolsOnly: boolean) {
 	if (candidate === undefined) return undefined;
-	const { before, after } = isDefinitionCandidate(candidate) ? candidate : {};
+	const hooks = isDefinitionCandidate(candidate) ? candidate : {};
+	validateKeys(hooks, attemptHookKeys, "template attempt hook");
+	const { before, after } = hooks;
 	if (
 		typeof before !== "function" ||
 		(after !== undefined && typeof after !== "function")
