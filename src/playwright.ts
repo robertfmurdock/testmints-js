@@ -4,9 +4,13 @@ import { test as playwrightTest } from "@playwright/test";
 import type { Reporter, TestCase, TestResult } from "@playwright/test/reporter";
 
 import {
+	createTemplate,
 	type EventSink,
 	executeDefinition,
+	type MintTemplateOptions,
+	type TemplateDefinition,
 	type TestmintDefinition,
+	type ValidatedDefinition,
 	validateDefinition,
 } from "./core.js";
 import {
@@ -35,13 +39,12 @@ class PlaywrightEventSink implements EventSink {
 }
 
 async function executePlaywrightMint<Input, Output>(
-	definition: TestmintDefinition<Input, Output>,
+	definition: ValidatedDefinition<Input, Output>,
 ): Promise<void> {
-	const validated = validateDefinition(definition);
 	const testInfo = playwrightTest.info();
 	const sink = new PlaywrightEventSink(testInfo.outputPath(attachmentName));
 	try {
-		await executeDefinition(validated, {
+		await executeDefinition(definition, {
 			sink,
 			eventContext: {
 				runId: "playwright",
@@ -70,10 +73,20 @@ async function executePlaywrightMint<Input, Output>(
 }
 
 /** Execute a complete Testmint definition in the active Playwright test. */
-export function mint<Input, Output>(
+export async function mint<Input, Output>(
 	definition: TestmintDefinition<Input, Output>,
 ): Promise<void> {
-	return executePlaywrightMint(definition);
+	return executePlaywrightMint(validateDefinition(definition));
+}
+
+/** Configure a Playwright mint with preparation shared by this template's attempts. */
+export function createMint<Shared>(options: MintTemplateOptions<Shared>) {
+	const bind = createTemplate(options);
+	return async function mint<Input, Output>(
+		definition: TemplateDefinition<Shared, Input, Output>,
+	): Promise<void> {
+		return executePlaywrightMint(bind(definition));
+	};
 }
 
 export interface TestmintsPlaywrightOptions {

@@ -1,6 +1,7 @@
 import { test } from "vitest";
 
-import { mint } from "../../src/vitest.js";
+import { createMint as createPlaywrightMint } from "../../src/playwright.js";
+import { createMint, mint } from "../../src/vitest.js";
 
 test(
 	"infers anonymous setup values",
@@ -15,6 +16,37 @@ test(
 		},
 	}),
 );
+
+test(
+	"infers configured Vitest phase data",
+	createMint({ shared: async () => ({ token: "member-token" }) })({
+		setup: ({ token }, { signal }) => ({ token, signal }),
+		exercise: async ({ token }) => token.length,
+		verify: (length, input) => {
+			const size: number = length;
+			const signal: AbortSignal = input.signal;
+			void size;
+			void signal;
+		},
+	}),
+);
+
+function checkPlaywrightTemplateTypes() {
+	const preparedMint = createPlaywrightMint({ shared: () => ({ port: 3000 }) });
+	return preparedMint({
+		setup: (server) => {
+			// @ts-expect-error The configured context contains a port, not a URL.
+			void server.url;
+			return server.port;
+		},
+		exercise: (port) => `http://localhost:${port.toFixed()}`,
+		verify: (url) => {
+			const address: string = url;
+			void address;
+		},
+	});
+}
+void checkPlaywrightTemplateTypes;
 
 test(
 	"permits void exercise output",

@@ -4,7 +4,7 @@ import { expect, test } from "vitest";
 
 import { executeDefinition, validateDefinition } from "../src/index.js";
 
-import { mint, runMint } from "../src/vitest.js";
+import { createMint, mint, runMint } from "../src/vitest.js";
 
 type Outcome<T> = { ok: true; value: T } | { ok: false; error: unknown };
 
@@ -23,6 +23,29 @@ function mintUnknown(candidate: unknown) {
 	// @ts-expect-error The public TypeScript API correctly refuses unknown input.
 	return mint(candidate);
 }
+
+let signIns = 0;
+let profileOpens = 0;
+const authenticatedMint = createMint({
+	shared: async () => ({ token: `member-token-${++signIns}` }),
+});
+
+test(
+	"a Vitest retry opens a new profile editor with the same credentials",
+	{ retry: 1 },
+	authenticatedMint({
+		setup: ({ token }) => {
+			if (++profileOpens === 1)
+				throw new Error("Profile editor temporarily unavailable.");
+			return { token };
+		},
+		exercise: async ({ token }) => `Bearer ${token}`,
+		verify: (authorization) => {
+			expect(authorization).toBe("Bearer member-token-1");
+			expect(profileOpens).toBe(2);
+		},
+	}),
+);
 
 test(
 	"mint validates malformed definitions when its callback is created",

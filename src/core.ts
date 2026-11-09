@@ -101,6 +101,15 @@ export interface TestmintDefinition<Input, Output> {
 	teardown?: (input: Input, tools: CleanupTools) => Awaitable<unknown>;
 }
 
+export interface TemplateDefinition<Shared, Input, Output>
+	extends Omit<TestmintDefinition<Input, Output>, "setup"> {
+	setup: (shared: Shared, tools: SetupTools) => Awaitable<Input>;
+}
+
+export interface MintTemplateOptions<Shared> {
+	shared: () => Awaitable<Shared>;
+}
+
 export type ValidatedDefinition<Input, Output> = Readonly<
 	TestmintDefinition<Input, Output>
 >;
@@ -157,6 +166,13 @@ export function validateDefinition<Input, Output>(
 export function validateDefinition(
 	candidate: unknown,
 ): ValidatedDefinition<unknown, unknown> {
+	return validatePhases(candidate, (setup, tools) => setup(tools));
+}
+
+function validatePhases(
+	candidate: unknown,
+	runSetup: (setup: UntypedCallback, tools: SetupTools) => unknown,
+): ValidatedDefinition<unknown, unknown> {
 	if (!isDefinitionCandidate(candidate)) {
 		throw new TypeError("A Testmint definition must be an object.");
 	}
@@ -172,7 +188,7 @@ export function validateDefinition(
 	const verify = requiredCallback(definition, "verify");
 	const teardown = optionalCallback(definition);
 	const validated = {
-		setup: (tools: SetupTools) => setup(tools),
+		setup: (tools: SetupTools) => runSetup(setup, tools),
 		exercise: (input: unknown, tools: ExerciseTools) => exercise(input, tools),
 		verify: (output: unknown, input: unknown, tools: PhaseTools) =>
 			verify(output, input, tools),
@@ -187,6 +203,31 @@ export function validateDefinition(
 						teardown(input, tools),
 				},
 	);
+}
+
+export function createTemplate<Shared>(options: MintTemplateOptions<Shared>) {
+	const shared = isDefinitionCandidate(options) ? options.shared : undefined;
+	if (typeof shared !== "function") {
+		throw new TypeError(
+			"A Testmint template requires a callable shared initializer.",
+		);
+	}
+	let preparation: Promise<Shared> | undefined;
+
+	function bind<Input, Output>(
+		candidate: TemplateDefinition<Shared, Input, Output>,
+	): ValidatedDefinition<Input, Output>;
+	function bind(candidate: unknown): ValidatedDefinition<unknown, unknown> {
+		return validatePhases(candidate, async (setup, tools) => {
+			tools.signal.throwIfAborted();
+			preparation ??= Promise.resolve().then(shared);
+			const context = await preparation;
+			tools.signal.throwIfAborted();
+			return setup(context, tools);
+		});
+	}
+
+	return bind;
 }
 
 class AttemptScope implements ResourceScope {
@@ -354,7 +395,7 @@ export async function executeDefinition<Input, Output>(
 	const phaseTools: PhaseTools = { signal };
 	const cleanupTools: CleanupTools = { signal: new AbortController().signal };
 	let completedSetup: { input: Input } | undefined;
-	let primaryError: unknown;
+	let failure: { error: unknown } | undefined;
 	const cleanupErrors: unknown[] = [];
 
 	await emitter.emit({ kind: "attempt.start" });
@@ -381,13 +422,13 @@ export async function executeDefinition<Input, Output>(
 				() => definition.verify(exercise.value, input, phaseTools),
 				options.executePhase,
 			);
-			if (!verify.ok) primaryError = verify.error;
+			if (!verify.ok) failure = verify;
 		} else {
-			primaryError = exercise.error;
+			failure = exercise;
 			await skipPhase(emitter, "verify", "exercise failed");
 		}
 	} else {
-		primaryError = setup.error;
+		failure = setup;
 		await skipPhase(emitter, "exercise", "setup failed");
 		await skipPhase(emitter, "verify", "setup failed");
 	}
@@ -411,26 +452,17 @@ export async function executeDefinition<Input, Output>(
 		options.executePhase,
 	);
 
+	const errors =
+		failure === undefined ? cleanupErrors : [failure.error, ...cleanupErrors];
+	const failed = errors.length > 0;
 	const finalError =
-		primaryError === undefined && cleanupErrors.length === 0
-			? undefined
-			: primaryError === undefined
-				? cleanupErrors.length === 1
-					? cleanupErrors[0]
-					: new AggregateError(
-							cleanupErrors,
-							"Testmint execution and cleanup failed.",
-						)
-				: cleanupErrors.length === 0
-					? primaryError
-					: new AggregateError(
-							[primaryError, ...cleanupErrors],
-							"Testmint execution and cleanup failed.",
-						);
+		errors.length > 1
+			? new AggregateError(errors, "Testmint execution and cleanup failed.")
+			: errors[0];
 	await emitter.emit({
 		kind: "attempt.end",
-		status: finalError === undefined ? "passed" : "failed",
-		...(finalError === undefined ? {} : { error: eventError(finalError) }),
+		status: failed ? "failed" : "passed",
+		...(failed ? { error: eventError(finalError) } : {}),
 	});
-	if (finalError !== undefined) throw finalError;
+	if (failed) throw finalError;
 }

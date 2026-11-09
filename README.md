@@ -32,6 +32,9 @@ test('15 produces FizzBuzz', mint({
 clearer—for example, in a parameterized test—use `runMint(definition, context)` inside the Vitest
 callback instead.
 
+Both adapters offer `createMint({ shared })` for lazy preparation shared by a configured mint
+instance. See [test templates](docs/template-design.md) for examples and lifecycle details.
+
 ## Local phase artifacts with Vitest
 
 Enable the Node/Vitest reporting plugin in `vitest.config.ts`. Existing `mint` callbacks need no

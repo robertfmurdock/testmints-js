@@ -5,7 +5,10 @@ import { inject } from "vitest";
 import type { Reporter } from "vitest/node";
 
 import {
+	createTemplate,
 	executeDefinition,
+	type MintTemplateOptions,
+	type TemplateDefinition,
 	type TestmintDefinition,
 	validateDefinition,
 } from "./core.js";
@@ -71,6 +74,17 @@ export function mint<Input, Output>(
 ): TestFunction {
 	const validated = validateDefinition(definition);
 	return async (context) => runValidatedMint(validated, context);
+}
+
+/** Configure a Vitest mint with preparation shared by this template's attempts. */
+export function createMint<Shared>(options: MintTemplateOptions<Shared>) {
+	const bind = createTemplate(options);
+	return function mint<Input, Output>(
+		definition: TemplateDefinition<Shared, Input, Output>,
+	): TestFunction {
+		const validated = bind(definition);
+		return async (context) => runValidatedMint(validated, context);
+	};
 }
 
 class TestmintsReporter implements Reporter {

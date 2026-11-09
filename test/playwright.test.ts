@@ -88,12 +88,24 @@ test(
 			expect(phases).toContain("exercise");
 			expect(phases).toContain("verify");
 			expect(phases).toContain("teardown");
+			const retryEvents = events.filter((event) =>
+				event.title?.includes("fresh Testmints attempt"),
+			);
 			const retryAttempts = new Set(
-				events
-					.filter((event) => event.title?.includes("fresh Testmints attempt"))
-					.map((event) => event.attemptId),
+				retryEvents.map((event) => event.attemptId),
 			);
 			expect(retryAttempts.size).toBe(2);
+			expect(new Set(retryEvents.map((event) => event.producerId)).size).toBe(
+				2,
+			);
+			const retry = retryEvents.find((event) =>
+				event.attemptId?.endsWith("-1"),
+			);
+			const fixtureAttempt = events.find((event) =>
+				event.title?.includes("a Playwright page and custom fixture"),
+			);
+			expect(retry?.producerId).toBeDefined();
+			expect(fixtureAttempt?.producerId).toBe(retry?.producerId);
 			const sequencesByProducer = new Map<string, number[]>();
 			for (const event of events) {
 				if (event.producerId === undefined || event.seq === undefined) continue;

@@ -4,7 +4,11 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { expect, test } from "vitest";
 
-import { executeDefinition, validateDefinition } from "../src/index.js";
+import {
+	executeDefinition,
+	type TestmintEvent,
+	validateDefinition,
+} from "../src/index.js";
 import { mint } from "../src/vitest.js";
 
 async function captureError<T>(
@@ -272,6 +276,31 @@ test(
 		},
 		verify: (calls) =>
 			expect(calls).toEqual(["close:tmp/report", "remove directory"]),
+	}),
+);
+
+test(
+	"a rejection without a reason still fails the attempt",
+	mint({
+		setup: (): TestmintEvent[] => [],
+		exercise: (events) =>
+			Promise.allSettled([
+				executeDefinition(
+					validateDefinition({
+						setup: () => Promise.reject(undefined),
+						exercise: () => undefined,
+						verify: () => undefined,
+					}),
+					{ sink: { emit: (event) => void events.push(event) } },
+				),
+			]),
+		verify: (result, events) => {
+			expect(result).toEqual([{ status: "rejected", reason: undefined }]);
+			expect(events.at(-1)).toMatchObject({
+				kind: "attempt.end",
+				status: "failed",
+			});
+		},
 	}),
 );
 

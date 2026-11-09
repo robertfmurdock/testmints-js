@@ -3,7 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { test as base, expect } from "@playwright/test";
 
-import { mint } from "../src/playwright.js";
+import { createMint, mint } from "../src/playwright.js";
 
 async function captureError(action: () => Promise<void>): Promise<unknown> {
 	try {
@@ -258,24 +258,32 @@ test("expected rejection remains data for ordinary verification", () =>
 		},
 	}));
 
+let preparations = 0;
+const preparedMint = createMint({
+	shared: async () => ({ pageContent: `<main>hello ${++preparations}</main>` }),
+});
+
 test("a retry receives a fresh Testmints attempt", () =>
-	mint({
-		setup: () => {
+	preparedMint({
+		setup: ({ pageContent }) => {
 			if (test.info().retry === 0) throw new Error("retry once");
-			return "retried";
+			return pageContent;
 		},
 		exercise: (value) => value,
-		verify: (value) => expect(value).toBe("retried"),
+		verify: (value) => {
+			expect(value).toBe("<main>hello 1</main>");
+			expect(preparations).toBe(1);
+		},
 	}));
 
 test("a Playwright page and custom fixture remain available through every Testmints phase", ({
 	page,
 	lifecycle,
 }) =>
-	mint({
-		setup: async ({ scope }) => {
+	preparedMint({
+		setup: async ({ pageContent }, { scope }) => {
 			lifecycle.calls.push("setup");
-			await page.setContent("<main>hello</main>");
+			await page.setContent(pageContent);
 			await scope.using(
 				"report",
 				() => "report",
@@ -291,7 +299,8 @@ test("a Playwright page and custom fixture remain available through every Testmi
 		},
 		verify: (content) => {
 			lifecycle.calls.push("verify");
-			expect(content).toBe("hello");
+			expect(content).toBe("hello 1");
+			expect(preparations).toBe(1);
 		},
 		teardown: () => lifecycle.calls.push("teardown"),
 	}));
