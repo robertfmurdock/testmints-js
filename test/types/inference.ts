@@ -120,6 +120,66 @@ const workspaceMint = createMint({
 	},
 });
 
+const auditMint = workspaceMint.extend({
+	shared: (credentials) => {
+		// @ts-expect-error Shared initialization receives credentials, not the attempt workspace.
+		void credentials.id;
+		return { auditToken: credentials.token };
+	},
+	attempt: {
+		before: ({ auditToken }, _tools, parentWorkspace) => ({
+			auditToken,
+			workspaceId: parentWorkspace.id,
+		}),
+		after: ({ workspaceId }) => {
+			const id: number = workspaceId;
+			void id;
+		},
+	},
+});
+
+const memberWorkspaceMint = workspaceMint.extend({
+	attempt: { before: ({ id }) => ({ memberWorkspaceId: id }) },
+});
+
+const workspaceReportMint = memberWorkspaceMint.extend({
+	shared: ({ token }) => ({ reportToken: token }),
+	attempt: {
+		before: ({ reportToken }, _tools, { memberWorkspaceId }) => ({
+			reportToken,
+			memberWorkspaceId,
+		}),
+	},
+});
+
+test(
+	"an attempt-only layer preserves shared context for later extensions",
+	workspaceReportMint({
+		setup: ({ memberWorkspaceId, reportToken }) => ({
+			memberWorkspaceId,
+			reportToken,
+		}),
+		exercise: ({ memberWorkspaceId, reportToken }) =>
+			memberWorkspaceId + reportToken.length,
+		verify: (length) => {
+			const size: number = length;
+			void size;
+		},
+	}),
+);
+
+test(
+	"infers child setup from its hook and the parent's attempt context",
+	auditMint({
+		setup: ({ workspaceId }) => workspaceId,
+		exercise: (id) => id.toFixed(),
+		verify: (label) => {
+			const name: string = label;
+			void name;
+		},
+	}),
+);
+
 test(
 	"infers the attempt context separately from shared credentials",
 	workspaceMint({

@@ -5,10 +5,14 @@ import type { Reporter, TestCase, TestResult } from "@playwright/test/reporter";
 
 import {
 	bindTemplate,
+	type ConfiguredMint,
 	type EventSink,
 	executeDefinition,
 	type HookedMintTemplateOptions,
 	type MintTemplateOptions,
+	type RegisterDisposal,
+	type SharedTools,
+	type TemplateBinding,
 	type TemplateDefinition,
 	type TestmintDefinition,
 	type ValidatedDefinition,
@@ -80,24 +84,41 @@ export async function mint<Input, Output>(
 	return executePlaywrightMint(validateDefinition(definition));
 }
 
-type ConfiguredMint<Context> = <Input, Output>(
-	definition: TemplateDefinition<Context, Input, Output>,
-) => Promise<void>;
-
 /** Configure a mint with lazy shared preparation and optional per-attempt hooks. */
 export function createMint<Shared, Context>(
+	options: HookedMintTemplateOptions<Shared, Context, [SharedTools]>,
+	registerDisposal: RegisterDisposal,
+): ConfiguredMint<Shared, Context, true, Promise<void>>;
+export function createMint<Shared>(
+	options: MintTemplateOptions<Shared, [SharedTools]>,
+	registerDisposal: RegisterDisposal,
+): ConfiguredMint<Shared, Shared, true, Promise<void>>;
+export function createMint<Shared, Context>(
 	options: HookedMintTemplateOptions<Shared, Context>,
-): ConfiguredMint<Context>;
+): ConfiguredMint<Shared, Context, false, Promise<void>>;
 export function createMint<Shared>(
 	options: MintTemplateOptions<Shared>,
-): ConfiguredMint<Shared>;
-export function createMint(options: unknown): ConfiguredMint<unknown> {
-	const bind = bindTemplate(options);
-	return async function mint<Input, Output>(
+): ConfiguredMint<Shared, Shared, false, Promise<void>>;
+export function createMint(
+	options: unknown,
+	registerDisposal?: RegisterDisposal,
+) {
+	return configuredMint(bindTemplate(options, registerDisposal));
+}
+
+function configuredMint(
+	binding: TemplateBinding,
+): ConfiguredMint<unknown, unknown, boolean, Promise<void>> {
+	async function mint<Input, Output>(
 		definition: TemplateDefinition<unknown, Input, Output>,
 	): Promise<void> {
-		return executePlaywrightMint(bind(definition));
-	};
+		return executePlaywrightMint(binding.bind(definition));
+	}
+
+	return Object.assign(mint, {
+		dispose: binding.dispose,
+		extend: (options: unknown) => configuredMint(binding.extend(options)),
+	});
 }
 
 export interface TestmintsPlaywrightOptions {

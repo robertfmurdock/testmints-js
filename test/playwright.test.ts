@@ -141,6 +141,8 @@ test(
 					"test",
 					"-c",
 					"test/playwright.failed.config.ts",
+					"--grep",
+					"records failed verification",
 				]);
 				return true;
 			} catch {
@@ -187,6 +189,40 @@ test(
 						event.status === "passed",
 				),
 			).toBe(true);
+		},
+	}),
+);
+
+test(
+	"a Playwright worker fixture surfaces shared disposal failure at shutdown",
+	mint({
+		setup: () => "worker could not close the profile service",
+		exercise: async () => {
+			try {
+				const result = await run(process.execPath, [
+					"node_modules/@playwright/test/cli.js",
+					"test",
+					"-c",
+					"test/playwright.failed.config.ts",
+					"--grep",
+					"reports a shared resource failure",
+					"--reporter=line",
+				]);
+				return { passed: true, output: result.stdout };
+			} catch (error) {
+				return {
+					passed: false,
+					output:
+						String(error) +
+						(error && typeof error === "object" && "stdout" in error
+							? String(error.stdout)
+							: ""),
+				};
+			}
+		},
+		verify: ({ passed, output }, message) => {
+			expect(passed).toBe(false);
+			expect(output).toContain(message);
 		},
 	}),
 );

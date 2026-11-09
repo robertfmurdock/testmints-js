@@ -22,10 +22,34 @@ async function captureRun(args: string[]) {
 	try {
 		await run(process.execPath, args);
 		return { passed: true };
-	} catch {
-		return { passed: false };
+	} catch (error) {
+		return { passed: false, error };
 	}
 }
+
+test(
+	"Vitest afterAll surfaces shared disposal failure at suite shutdown",
+	mint({
+		setup: ({ scope }) => {
+			scope.defer("fixture artifacts", () =>
+				rm(artifactRoot, { recursive: true, force: true }),
+			);
+			return "suite could not close the profile service";
+		},
+		exercise: () =>
+			captureRun([
+				"node_modules/vitest/vitest.mjs",
+				"run",
+				"test/fixtures/template-disposal.case.ts",
+				"--config",
+				"test/fixtures/reporting.config.ts",
+			]),
+		verify: (outcome, message) => {
+			expect(outcome.passed).toBe(false);
+			expect("error" in outcome && String(outcome.error)).toContain(message);
+		},
+	}),
+);
 
 async function captureInspector(directory: string) {
 	const output = vi.spyOn(console, "log").mockImplementation(() => undefined);

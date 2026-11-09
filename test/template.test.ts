@@ -1,7 +1,12 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { expect, test } from "vitest";
+import { afterAll, expect, test } from "vitest";
 
-import { createTemplate, executeDefinition } from "../src/core.js";
+import {
+	bindTemplate,
+	createTemplate,
+	executeDefinition,
+	type SharedTools,
+} from "../src/core.js";
 import { createMint, mint } from "../src/vitest.js";
 
 const profileLinkMint = createMint({
@@ -18,6 +23,21 @@ test(
 			expect(link.origin).toBe(new URL(baseUrl).origin);
 			expect(link.pathname).toBe(`/members/${memberId}`);
 		},
+	}),
+);
+
+const auditLinkMint = profileLinkMint.extend({
+	attempt: {
+		before: ({ baseUrl }) => ({ auditPage: new URL("audit/", baseUrl) }),
+	},
+});
+
+test(
+	"an attempt-only extension derives an audit page from its parent",
+	auditLinkMint({
+		setup: ({ auditPage }) => ({ auditPage, entry: "sign-ins" }),
+		exercise: ({ auditPage, entry }) => new URL(entry, auditPage),
+		verify: (link, { entry }) => expect(link.pathname).toBe(`/audit/${entry}`),
 	}),
 );
 
@@ -63,22 +83,317 @@ test(
 	}),
 );
 
+test.describe("a suite owns a shared service and its specialized mints", () => {
+	const events: string[] = [];
+	const serviceMint = createMint(
+		{
+			shared: ({ scope }) =>
+				scope.using(
+					"profile service",
+					() => {
+						events.push("open service");
+						return { baseUrl: "https://profiles.example.test/" };
+					},
+					() => events.push("close service"),
+				),
+			attempt: {
+				before: ({ baseUrl }) => {
+					events.push("start member session");
+					return { memberPage: new URL("members/", baseUrl) };
+				},
+				after: () => events.push("end member session"),
+			},
+		},
+		(dispose) =>
+			afterAll(async () => {
+				await dispose();
+				expect(events).toEqual([
+					"open service",
+					"open admin connection",
+					"start member session",
+					"start admin session",
+					"end admin session",
+					"end member session",
+					"start member session",
+					"end member session",
+					"start member session",
+					"end member session",
+					"close admin connection",
+					"close service",
+				]);
+			}),
+	);
+
+	const adminMint = serviceMint.extend({
+		shared: ({ baseUrl }, { scope }) =>
+			scope.using(
+				"admin connection",
+				() => {
+					events.push("open admin connection");
+					return { adminPage: new URL("admin/", baseUrl) };
+				},
+				() => events.push("close admin connection"),
+			),
+		attempt: {
+			before: ({ adminPage }, _tools, { memberPage }) => {
+				events.push("start admin session");
+				return { adminPage, memberPage };
+			},
+			after: () => events.push("end admin session"),
+		},
+	});
+
+	const auditMint = serviceMint.extend({
+		attempt: {
+			before: ({ memberPage }) => ({
+				auditPage: new URL("../audit/", memberPage),
+			}),
+		},
+	});
+
+	// All three callbacks use one runner context and one suite-owned lifetime.
+	test("a suite unwinds specialized mints before releasing their shared service", async (context) => {
+		await adminMint({
+			setup: (session) => ({ ...session, memberId: "ada" }),
+			exercise: ({ adminPage, memberId }) => new URL(memberId, adminPage),
+			verify: (link, { memberPage, memberId }) => {
+				expect(link.origin).toBe(memberPage.origin);
+				expect(link.pathname).toBe(`/admin/${memberId}`);
+			},
+		})(context);
+		await auditMint({
+			setup: ({ auditPage }) => ({ auditPage, entry: "sign-ins" }),
+			exercise: ({ auditPage, entry }) => new URL(entry, auditPage),
+			verify: (link, { entry }) =>
+				expect(link.pathname).toBe(`/audit/${entry}`),
+		})(context);
+		await serviceMint({
+			setup: ({ memberPage }) => ({ memberPage, memberId: "ada" }),
+			exercise: ({ memberPage, memberId }) => new URL(memberId, memberPage),
+			verify: (link, { memberId }) =>
+				expect(link.pathname).toBe(`/members/${memberId}`),
+		})(context);
+	});
+});
+
+function gate() {
+	let open: () => void = () => undefined;
+	const promise = new Promise<void>((resolve) => {
+		open = resolve;
+	});
+	return { promise, open };
+}
+
 // These cases drive individual attempts to control overlap, failure, and cancellation.
 test(
-	"concurrent scenarios reuse one credential while owning separate resources",
+	"disposal lets an active attempt finish cleanup and rejects new attempts",
+	mint({
+		setup: () => {
+			const events: string[] = [];
+			const started = gate();
+			const finish = gate();
+			const template = bindTemplate(
+				{
+					shared: ({ scope }: SharedTools) =>
+						scope.using(
+							"service",
+							() => undefined,
+							() => events.push("close service"),
+						),
+				},
+				() => undefined,
+			);
+			const scenario = template.bind({
+				setup: () => undefined,
+				exercise: async () => {
+					started.open();
+					await finish.promise;
+				},
+				verify: () => undefined,
+				teardown: () => events.push("close request"),
+			});
+			const lateRequest = template.bind({
+				setup: () => undefined,
+				exercise: () => undefined,
+				verify: () => undefined,
+			});
+			return { events, started, finish, template, scenario, lateRequest };
+		},
+		exercise: async ({ started, finish, template, scenario, lateRequest }) => {
+			const active = executeDefinition(scenario);
+			await started.promise;
+			const disposal = template.dispose();
+			const duplicate = template.dispose();
+			const [lateAttempt] = await Promise.allSettled([
+				executeDefinition(lateRequest),
+			]);
+			finish.open();
+			await Promise.all([active, disposal, duplicate]);
+			return lateAttempt;
+		},
+		verify: (lateAttempt, { events }) => {
+			expect(lateAttempt).toMatchObject({
+				status: "rejected",
+				reason: { message: "Cannot use a disposed Testmint template." },
+			});
+			expect(events).toEqual(["close request", "close service"]);
+		},
+	}),
+);
+
+test(
+	"an interrupted teardown wrapper still releases the active request",
+	mint({
+		setup: () => {
+			const interruption = new Error("runner could not open the teardown step");
+			const events: string[] = [];
+			const template = bindTemplate({ shared: () => undefined });
+			const scenario = template.bind({
+				setup: (_, { scope }) =>
+					scope.using(
+						"request",
+						() => undefined,
+						() => events.push("close request"),
+					),
+				exercise: () => undefined,
+				verify: () => undefined,
+			});
+			return { events, interruption, scenario };
+		},
+		exercise: ({ scenario, interruption }) =>
+			Promise.allSettled([
+				executeDefinition(scenario, {
+					executePhase: (phase, callback) => {
+						if (phase === "teardown") throw interruption;
+						return callback();
+					},
+				}),
+			]),
+		verify: (outcomes, { events, interruption }) => {
+			expect(outcomes).toEqual([{ status: "rejected", reason: interruption }]);
+			expect(events).toEqual(["close request"]);
+		},
+	}),
+);
+
+test(
+	"failed shared preparation rolls back and retains its cleanup failure",
+	mint({
+		setup: () => {
+			const unavailable = new Error("service configuration failed");
+			const closeFailure = new Error("service close failed");
+			const events: string[] = [];
+			const template = bindTemplate(
+				{
+					shared: async ({ scope }: SharedTools) => {
+						await scope.using(
+							"service",
+							() => undefined,
+							() => {
+								events.push("close service");
+								throw closeFailure;
+							},
+						);
+						throw unavailable;
+					},
+				},
+				() => undefined,
+			);
+			const scenario = template.bind({
+				setup: () => events.push("open request"),
+				exercise: () => undefined,
+				verify: () => undefined,
+			});
+			return { unavailable, closeFailure, events, template, scenario };
+		},
+		exercise: async ({ template, scenario, events }) => {
+			const [first] = await Promise.allSettled([executeDefinition(scenario)]);
+			const [later] = await Promise.allSettled([executeDefinition(scenario)]);
+			const beforeDisposal = [...events];
+			await template.dispose();
+			return { first, later, beforeDisposal };
+		},
+		verify: (
+			{ first, later, beforeDisposal },
+			{ unavailable, closeFailure, events },
+		) => {
+			expect(first).toMatchObject({
+				status: "rejected",
+				reason: { errors: [unavailable, closeFailure] },
+			});
+			expect(later).toEqual(first);
+			expect(beforeDisposal).toEqual(["close service"]);
+			expect(events).toEqual(beforeDisposal);
+		},
+	}),
+);
+
+test(
+	"preparation starts only when a template instance is used",
 	mint({
 		setup: () => {
 			const signIns: string[] = [];
-			const releases: string[] = [];
-			const profileIds = ["ada", "grace"];
-			const authenticate = async () => {
+			const signIn = () => {
 				signIns.push("sign in");
-				await delay(0);
 				return { token: "member-token" };
 			};
-			const memberTemplate = createTemplate({ shared: authenticate });
-			const otherTemplate = createTemplate({ shared: authenticate });
-			const unusedTemplate = createTemplate({ shared: authenticate });
+			const profile = {
+				setup: ({ token }: { token: string }) => token,
+				exercise: (token: string) => `Bearer ${token}`,
+				verify: (authorization: string) =>
+					expect(authorization).toBe("Bearer member-token"),
+			};
+			const first = createTemplate({ shared: signIn })(profile);
+			const second = createTemplate({ shared: signIn })(profile);
+			createTemplate({ shared: signIn })(profile);
+			return { signIns, first, second };
+		},
+		exercise: async ({ signIns, first, second }) => {
+			const beforeExecution = signIns.length;
+			await executeDefinition(first);
+			await executeDefinition(second);
+			return beforeExecution;
+		},
+		verify: (beforeExecution, { signIns }) => {
+			expect(beforeExecution).toBe(0);
+			expect(signIns).toEqual(["sign in", "sign in"]);
+		},
+	}),
+);
+
+async function beforeDeadline(observation: Promise<unknown>): Promise<boolean> {
+	const deadline = new AbortController();
+	try {
+		return await Promise.race([
+			observation.then(() => true),
+			delay(1_000, false, { signal: deadline.signal }),
+		]);
+	} finally {
+		deadline.abort();
+	}
+}
+
+test(
+	"concurrent scenarios wait for one sign-in and exercise independently",
+	mint({
+		setup: () => {
+			const profileIds = ["ada", "grace"];
+			const releases: string[] = [];
+			const editing: string[] = [];
+			const signIns: string[] = [];
+			const signInStarted = gate();
+			const finishSignIn = gate();
+			const bothEditing = gate();
+			const finishEditing = gate();
+			const token = "member-token";
+			const memberTemplate = createTemplate({
+				shared: async () => {
+					signIns.push("sign in");
+					signInStarted.open();
+					await finishSignIn.promise;
+					return { token };
+				},
+			});
 			const attempts = profileIds.map((id) =>
 				memberTemplate({
 					setup: ({ token }, { scope }) =>
@@ -90,38 +405,78 @@ test(
 								releases.push(editor.id);
 							},
 						),
-					exercise: (editor) => ({ id: editor.id, token: editor.token }),
-					verify: (result, editor) => {
-						expect(result).toEqual({ id, token: "member-token" });
+					exercise: async (editor) => {
+						editing.push(editor.id);
+						if (editing.length === profileIds.length) bothEditing.open();
+						await finishEditing.promise;
+						return editor.token;
+					},
+					verify: (accessToken, editor) => {
+						expect(accessToken).toBe(token);
 						expect(editor.closed).toBe(false);
 					},
 				}),
 			);
-			const readCredential = {
-				setup: ({ token }: { token: string }) => token,
-				exercise: (token: string) => token,
-				verify: (token: string) => expect(token).toBe("member-token"),
+			return {
+				attempts,
+				profileIds,
+				releases,
+				signIns,
+				signInStarted,
+				finishSignIn,
+				bothEditing,
+				finishEditing,
 			};
-			const standalone = otherTemplate(readCredential);
-			unusedTemplate(readCredential);
-			return { signIns, releases, profileIds, attempts, standalone };
 		},
-		exercise: async ({ attempts, standalone, signIns }) => {
-			const beforeExecution = signIns.length;
-			await Promise.all(attempts.map((attempt) => executeDefinition(attempt)));
-			const afterConcurrent = signIns.length;
-			await executeDefinition(standalone);
-			return { beforeExecution, afterConcurrent };
+		exercise: async ({
+			attempts,
+			signInStarted,
+			finishSignIn,
+			bothEditing,
+			finishEditing,
+		}) => {
+			const bothSettingUp = gate();
+			let setupsStarted = 0;
+			const executions = Promise.allSettled(
+				attempts.map((attempt) =>
+					executeDefinition(attempt, {
+						executePhase: (phase, callback) => {
+							const result = callback();
+							if (phase === "setup" && ++setupsStarted === attempts.length)
+								bothSettingUp.open();
+							return result;
+						},
+					}),
+				),
+			);
+			const setupsEnteredWhileSigningIn = await beforeDeadline(
+				Promise.all([signInStarted.promise, bothSettingUp.promise]),
+			);
+			finishSignIn.open();
+			const exercisesOverlapped = await beforeDeadline(bothEditing.promise);
+			finishEditing.open();
+			return {
+				setupsEnteredWhileSigningIn,
+				exercisesOverlapped,
+				outcomes: await executions,
+			};
 		},
 		verify: (
-			{ beforeExecution, afterConcurrent },
-			{ signIns, releases, profileIds },
+			{ setupsEnteredWhileSigningIn, exercisesOverlapped, outcomes },
+			{ profileIds, releases, signIns },
 		) => {
-			expect(beforeExecution).toBe(0);
-			expect(afterConcurrent).toBe(1);
-			expect(signIns).toEqual(["sign in", "sign in"]);
-			expect(releases).toHaveLength(profileIds.length);
-			expect(releases).toEqual(expect.arrayContaining(profileIds));
+			expect(
+				setupsEnteredWhileSigningIn,
+				"both setups entered while sign-in was pending",
+			).toBe(true);
+			expect(exercisesOverlapped, "both exercises reached the barrier").toBe(
+				true,
+			);
+			expect(outcomes).toEqual(
+				profileIds.map(() => ({ status: "fulfilled", value: undefined })),
+			);
+			expect(signIns).toEqual(["sign in"]);
+			expect([...releases].sort()).toEqual([...profileIds].sort());
 		},
 	}),
 );

@@ -108,17 +108,15 @@ Kotlin Testmints has two lifetimes. Its `beforeAll` overload prepares a lazy cac
 template teardown failures. JavaScript's `shared` corresponds to the first lifetime. Per-attempt
 hooks and disposal of cached resources need separate ownership.
 
-The initializer has no Testmints resource scope. Use shared values that need no disposal, or values
-whose lifetime is already managed externally. The initializer owns rollback of any partially
-acquired resources if it throws. Use the attempt scope for scenario-owned resources and the
-runner's own lifecycle facilities for resources those facilities own.
+An ordinary shared initializer can return data or resources whose lifetime is managed externally.
+Use a disposal registrar when the template should own the shared resources. The attempt scope
+continues to own scenario resources.
 
 ### Per-attempt before and after
 
-Both adapters accept `attempt: { before, after }` on `createMint`. The `before` hook receives the
-cached value and attempt setup tools. Its return value becomes the context for scenario setup
-and for `after`, which receives cleanup tools. For example, use shared credentials to open a
-temporary workspace per attempt and collect diagnostics before closing it.
+`attempt.before` turns shared data into context for scenario setup and the optional
+`attempt.after`. Use the attempt scope for resources and `after` for work such as collecting
+diagnostics before those resources close.
 
 ```ts
 const workspaceMint = createMint({
@@ -131,44 +129,59 @@ const workspaceMint = createMint({
 })
 ```
 
-The hooks run within the existing setup and teardown phases, including on retries. Once
-`before` succeeds, scenario teardown and scenario resource releases run before `after`. Resources
-acquired by `before` are released after `after` completes. If scenario setup fails, `after` still
-runs. If `before` fails, cleanup releases the resources it already registered. Hook and release
-failures are retained alongside the primary failure.
+Hooks run in setup and teardown on each attempt, including retries. When `before` succeeds,
+`after` runs after scenario cleanup and before resources from `before` are released. Resources
+already registered by a failing `before` still close. Cleanup failures are retained alongside
+the primary failure.
 
-### Future disposal of cached resources
+### Disposal of cached resources
 
-An opt-in managed template can give `shared` a template-owned scope with the same acquisition and
-release interface as the attempt scope. Existing zero-argument initializers still fit that
-callback shape. Require a lifecycle owner when exposing the shared scope so there is a place to
-register and await disposal. Roll back partial shared initialization immediately on rejection
-and cache the original failure together with any rollback failures.
+Pass a disposal registrar as the second argument to `createMint` to give shared preparation a
+template-owned resource scope. Use `scope.using()` to pair acquisition with release. The registrar
+receives one async disposal callback when the mint is created. In Vitest, a suite can pass
+`afterAll` directly when it owns every test that uses the mint.
 
-The owner must cover all attempts using the instance. For example, a file-local instance can
-use a Vitest suite's `afterAll` when that suite owns every dependent test. A Playwright worker
-fixture can create the instance and await its disposal after yielding it to tests. A module import
-by itself supplies no such boundary. Before choosing the public API, prove these paths with a
-real suite and a worker fixture, including a disposal failure reaching each runner.
+```ts
+import { afterAll } from 'vitest'
+import { createMint } from '@continuous-excellence/testmints-js/vitest'
 
-Disposal closes the instance to new attempts, waits for in-flight preparation and attempts to
-finish, and releases initialized resources once in reverse order. An unused instance can close
-without starting preparation. The owner awaits disposal so failures surface through its runner
-boundary. Abrupt worker termination can prevent cleanup.
+const profileServiceMint = createMint({
+  shared: ({ scope }) =>
+    scope.using('profile service', startProfileService, service => service.close()),
+}, afterAll)
+```
 
-The current core factory already owns the lazy promise independently of either adapter. For
-disposal, that private state can also track attempts from before they wait for preparation
-through the end of their cleanup, including template after. The runner adapter supplies the
-completion boundary. Existing definitions, setup's two argument positions, and each runner's
-registration syntax can stay as they are.
+For Playwright, create the mint in a worker fixture. Capture the registered callback and await it
+in the fixture's `finally` block after `await use(configuredMint)`. Both runners report disposal
+failures through their native teardown. A module import supplies no runner lifecycle boundary.
+
+Disposal rejects new attempts, lets admitted attempts finish preparation and cleanup, and releases
+shared resources once in reverse acquisition order. Closing an unused mint leaves preparation
+lazy. A failed initializer rolls back partial acquisitions immediately and caches the failure,
+including any rollback failures. Abrupt worker termination can prevent cleanup. Call or register
+disposal from the owner outside the mint's own attempts because disposal waits for those attempts.
 
 ### Composition
 
-A future composition API could build an administrative template from an authenticated one. The
-working direction is for siblings derived from the same parent instance to reuse its preparation,
-initialize each child lazily after its parent succeeds, and explicitly produce the child's context
-from the parent's. Per-attempt hooks would enter parent first and unwind child first. A child
-borrows the parent's cached value, so disposing that child releases its own resources while the
-parent's owner keeps the parent alive for siblings and direct consumers. When one owner closes
-the whole tree, it disposes children before their prerequisites. Extension and refresh remain
-open until executable examples establish their ownership and failure behavior.
+Use `extend({ attempt })` to add per-attempt behavior. The child inherits shared preparation and
+its `before` receives the parent's attempt context.
+
+```ts
+const workspaceReportMint = workspaceMint.extend({
+  attempt: { before: workspace => ({ workspace, reportPath: 'summary.json' }) },
+})
+```
+
+Use `extend({ shared })` to derive new shared data from the parent's. A managed child receives
+its own shared scope.
+
+```ts
+const adminMint = profileServiceMint.extend({
+  shared: (service, { scope }) =>
+    scope.using('admin client', () => service.openAdminClient(), client => client.close()),
+})
+```
+
+When a child defines both `shared` and `attempt`, its `before` receives the child shared value,
+setup tools, and the parent attempt context. Hooks enter parent first and unwind child first.
+Disposal closes descendants before their parent. Calling `adminMint.dispose()` closes that subtree.

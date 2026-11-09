@@ -106,22 +106,79 @@ export interface TemplateDefinition<Context, Input, Output>
 	setup: (context: Context, tools: SetupTools) => Awaitable<Input>;
 }
 
-export interface MintTemplateOptions<Shared> {
-	shared: () => Awaitable<Shared>;
+export interface MintTemplateOptions<Shared, Args extends unknown[] = []> {
+	shared: (...args: Args) => Awaitable<Shared>;
 	attempt?: never;
 }
 
-export interface HookedMintTemplateOptions<Shared, Context> {
-	shared: () => Awaitable<Shared>;
-	attempt: {
-		before: (shared: Shared, tools: SetupTools) => Awaitable<Context>;
-		after: (context: Context, tools: CleanupTools) => Awaitable<unknown>;
-	};
+export interface HookedMintTemplateOptions<
+	Shared,
+	Context,
+	Args extends unknown[] = [],
+	Parent extends unknown[] = [],
+> {
+	shared: (...args: Args) => Awaitable<Shared>;
+	attempt: AttemptHooks<Shared, Context, Parent>;
+}
+
+interface AttemptHooks<Input, Context, Parent extends unknown[] = []> {
+	before: (
+		input: Input,
+		tools: SetupTools,
+		...parent: Parent
+	) => Awaitable<Context>;
+	after?: (context: Context, tools: CleanupTools) => Awaitable<unknown>;
+}
+
+export interface SharedTools {
+	readonly scope: ResourceScope;
+}
+
+export type RegisterDisposal = (dispose: () => Promise<void>) => void;
+
+export type ExtensionArgs<
+	Shared,
+	Managed extends boolean,
+> = Managed extends true
+	? [parent: Shared, tools: SharedTools]
+	: [parent: Shared];
+
+export interface ConfiguredMint<
+	Shared,
+	Context,
+	Managed extends boolean,
+	Result,
+> {
+	<Input, Output>(
+		definition: TemplateDefinition<Context, Input, Output>,
+	): Result;
+	dispose(): Promise<void>;
+	extend<ChildContext>(options: {
+		shared?: never;
+		attempt: AttemptHooks<Context, ChildContext>;
+	}): ConfiguredMint<Shared, ChildContext, Managed, Result>;
+	extend<Child, ChildContext>(
+		options: HookedMintTemplateOptions<
+			Child,
+			ChildContext,
+			ExtensionArgs<Shared, Managed>,
+			[parent: Context]
+		>,
+	): ConfiguredMint<Child, ChildContext, Managed, Result>;
+	extend<Child>(
+		options: MintTemplateOptions<Child, ExtensionArgs<Shared, Managed>>,
+	): ConfiguredMint<Child, Child, Managed, Result>;
 }
 
 type TemplateBinder<Context> = <Input, Output>(
 	candidate: TemplateDefinition<Context, Input, Output>,
 ) => ValidatedDefinition<Input, Output>;
+
+export interface TemplateBinding {
+	bind: TemplateBinder<unknown>;
+	dispose: () => Promise<void>;
+	extend: (options: unknown) => TemplateBinding;
+}
 
 export type ValidatedDefinition<Input, Output> = Readonly<
 	TestmintDefinition<Input, Output>
@@ -225,60 +282,201 @@ export function createTemplate<Shared>(
 	options: MintTemplateOptions<Shared>,
 ): TemplateBinder<Shared>;
 export function createTemplate(options: unknown) {
-	return bindTemplate(options);
+	return bindTemplate(options).bind;
 }
 
-export function bindTemplate(options: unknown): TemplateBinder<unknown> {
+export function bindTemplate(
+	options: unknown,
+	registerDisposal?: RegisterDisposal,
+): TemplateBinding {
+	if (
+		registerDisposal !== undefined &&
+		typeof registerDisposal !== "function"
+	) {
+		throw new TypeError("A Testmint disposal registrar must be callable.");
+	}
+	const template = new TemplateLifetime(
+		options,
+		registerDisposal !== undefined,
+	);
+	const binding = template.binding();
+	registerDisposal?.(binding.dispose);
+	return binding;
+}
+
+function validateInitializer(options: unknown, canInherit: boolean) {
 	const { shared, attempt } = isDefinitionCandidate(options) ? options : {};
+	const hooks = validateAttemptHooks(attempt);
+	if (shared === undefined && canInherit && hooks !== undefined) {
+		return { prepare: undefined, hooks };
+	}
 	if (typeof shared !== "function") {
 		throw new TypeError(
 			"A Testmint template requires a callable shared initializer.",
 		);
 	}
-	const prepare = shared;
-	const hooks = validateAttemptHooks(attempt);
-	let preparation: Promise<unknown> | undefined;
+	return {
+		prepare: (...args: unknown[]): unknown => shared(...args),
+		hooks,
+	};
+}
 
-	function bind<Input, Output>(
-		candidate: TemplateDefinition<unknown, Input, Output>,
-	): ValidatedDefinition<Input, Output>;
-	function bind(candidate: unknown): ValidatedDefinition<unknown, unknown> {
-		return validatePhases(candidate, async (setup, tools) => {
-			tools.signal.throwIfAborted();
-			preparation ??= Promise.resolve().then(() => prepare());
-			const context = await preparation;
-			tools.signal.throwIfAborted();
-			if (hooks === undefined) return setup(context, tools);
+class TemplateLifetime {
+	readonly #initializer: ReturnType<typeof validateInitializer>;
+	readonly #scope = new CleanupScope();
+	readonly #active = new Set<Promise<void>>();
+	readonly #children = new Set<TemplateLifetime>();
+	#preparation: Promise<unknown> | undefined;
+	#disposal: Promise<void> | undefined;
 
-			const attemptContext = await hooks.before(context, tools);
-			tools.scope.defer("template after", (cleanup) =>
-				hooks.after(attemptContext, cleanup),
-			);
-			tools.signal.throwIfAborted();
-			return setup(attemptContext, tools);
-		});
+	constructor(
+		options: unknown,
+		private readonly managed: boolean,
+		private readonly parent?: TemplateLifetime,
+	) {
+		this.#initializer = validateInitializer(options, parent !== undefined);
 	}
 
-	return bind;
+	binding(): TemplateBinding {
+		const template = this;
+		function bind<Input, Output>(
+			candidate: TemplateDefinition<unknown, Input, Output>,
+		): ValidatedDefinition<Input, Output>;
+		function bind(candidate: unknown): ValidatedDefinition<unknown, unknown> {
+			return validatePhases(candidate, async (setup, tools) => {
+				tools.signal.throwIfAborted();
+				template.#begin(tools.scope);
+				return setup(await template.#enter(tools), tools);
+			});
+		}
+		return {
+			bind,
+			dispose: () => this.#dispose(),
+			extend: (options) => {
+				this.#assertOpen();
+				const child = new TemplateLifetime(options, this.managed, this);
+				this.#children.add(child);
+				return child.binding();
+			},
+		};
+	}
+
+	#assertOpen(): void {
+		if (this.#disposal !== undefined) {
+			throw new Error("Cannot use a disposed Testmint template.");
+		}
+		if (this.parent !== undefined) this.parent.#assertOpen();
+	}
+
+	#begin(scope: ResourceScope): void {
+		this.#assertOpen();
+		let finish: () => void = () => undefined;
+		const active = new Promise<void>((resolve) => {
+			finish = resolve;
+		});
+		scope.defer("template attempt", () => {
+			this.#active.delete(active);
+			finish();
+		});
+		this.#active.add(active);
+	}
+
+	#prepare(): Promise<unknown> {
+		this.#preparation ??= Promise.resolve().then(() => this.#initialize());
+		return this.#preparation;
+	}
+
+	async #initialize(): Promise<unknown> {
+		const { prepare } = this.#initializer;
+		const args: unknown[] = [];
+		if (this.parent !== undefined) args.push(await this.parent.#prepare());
+		if (prepare === undefined) return args[0];
+		if (this.managed) args.push({ scope: this.#scope });
+		try {
+			return await prepare(...args);
+		} catch (error) {
+			const cleanupErrors = await this.#scope.close(cleanupTools());
+			if (cleanupErrors.length === 0) throw error;
+			throw new AggregateError(
+				[error, ...cleanupErrors],
+				"Testmint shared preparation and cleanup failed.",
+			);
+		}
+	}
+
+	async #enter(tools: SetupTools): Promise<unknown> {
+		const shared = await this.#prepare();
+		tools.signal.throwIfAborted();
+		const parent =
+			this.parent === undefined ? [] : [await this.parent.#enter(tools)];
+		tools.signal.throwIfAborted();
+		const { hooks } = this.#initializer;
+		if (hooks === undefined) return shared;
+
+		const context = await (this.#initializer.prepare === undefined
+			? hooks.before(parent[0], tools)
+			: hooks.before(shared, tools, ...parent));
+		const { after } = hooks;
+		if (after !== undefined) {
+			tools.scope.defer("template after", (cleanup) => after(context, cleanup));
+		}
+		tools.signal.throwIfAborted();
+		return context;
+	}
+
+	#dispose(): Promise<void> {
+		this.#disposal ??= Promise.resolve().then(() => this.#close());
+		return this.#disposal;
+	}
+
+	async #close(): Promise<void> {
+		const errors: unknown[] = [];
+		for (const child of [...this.#children].reverse()) {
+			try {
+				await child.#dispose();
+			} catch (error) {
+				errors.push(error);
+			}
+		}
+		await Promise.all(this.#active);
+		errors.push(...(await this.#scope.close(cleanupTools())));
+		if (this.parent !== undefined) this.parent.#children.delete(this);
+		if (errors.length === 1) throw errors[0];
+		if (errors.length > 1)
+			throw new AggregateError(errors, "Testmint template disposal failed.");
+	}
 }
 
 function validateAttemptHooks(candidate: unknown) {
 	if (candidate === undefined) return undefined;
 	const { before, after } = isDefinitionCandidate(candidate) ? candidate : {};
-	if (typeof before !== "function" || typeof after !== "function") {
+	if (
+		typeof before !== "function" ||
+		(after !== undefined && typeof after !== "function")
+	) {
 		throw new TypeError(
-			"Testmint template attempt hooks require callable before and after hooks.",
+			"Testmint template attempt hooks require a callable before hook and an optional callable after hook.",
 		);
 	}
 	return {
-		before: (context: unknown, tools: SetupTools): unknown =>
-			before(context, tools),
-		after: (context: unknown, tools: CleanupTools): unknown =>
-			after(context, tools),
+		before: (
+			context: unknown,
+			tools: SetupTools,
+			...parent: unknown[]
+		): unknown => before(context, tools, ...parent),
+		after:
+			typeof after === "function"
+				? (context: unknown, tools: CleanupTools): unknown =>
+						after(context, tools)
+				: undefined,
 	};
 }
 
-class AttemptScope implements ResourceScope {
+function cleanupTools(): CleanupTools {
+	return { signal: new AbortController().signal };
+}
+
+class CleanupScope implements ResourceScope {
 	readonly #releases: Array<{
 		name: string;
 		release: (tools: CleanupTools) => Awaitable<unknown>;
@@ -340,14 +538,18 @@ class AttemptScope implements ResourceScope {
 }
 
 function eventError(error: unknown): EventError {
-	if (error instanceof Error) {
-		return {
-			name: error.name,
-			message: error.message,
-			...(error.stack === undefined ? {} : { stack: error.stack }),
-		};
+	try {
+		if (error instanceof Error) {
+			return {
+				name: error.name,
+				message: error.message,
+				...(error.stack === undefined ? {} : { stack: error.stack }),
+			};
+		}
+		return { name: "Error", message: String(error) };
+	} catch {
+		return { name: "Error", message: "Unprintable error" };
 	}
-	return { name: "Error", message: String(error) };
 }
 
 class EventEmitter {
@@ -361,20 +563,20 @@ class EventEmitter {
 
 	async emit(event: EventPayload): Promise<void> {
 		if (!this.sink) return;
-		const complete: TestmintEvent = {
-			...(this.context ?? {
-				runId: "local",
-				producerId: "local",
-				attemptId: "local",
-				testId: "local",
-				title: "local",
-			}),
-			...event,
-			v: 1,
-			seq: this.nextSequence?.() ?? this.#sequence++,
-			timestamp: new Date().toISOString(),
-		} as TestmintEvent;
 		try {
+			const complete: TestmintEvent = {
+				...(this.context ?? {
+					runId: "local",
+					producerId: "local",
+					attemptId: "local",
+					testId: "local",
+					title: "local",
+				}),
+				...event,
+				v: 1,
+				seq: this.nextSequence?.() ?? this.#sequence++,
+				timestamp: new Date().toISOString(),
+			} as TestmintEvent;
 			await this.sink.emit(complete);
 		} catch {
 			// Instrumentation is not allowed to affect test behavior in this slice.
@@ -431,7 +633,7 @@ export async function executeDefinition<Input, Output>(
 	definition: ValidatedDefinition<Input, Output>,
 	options: ExecuteOptions = {},
 ): Promise<void> {
-	const scope = new AttemptScope();
+	const scope = new CleanupScope();
 	const emitter = new EventEmitter(
 		options.sink,
 		options.eventContext,
@@ -441,7 +643,7 @@ export async function executeDefinition<Input, Output>(
 	const setupTools: SetupTools = { signal, scope };
 	const exerciseTools: ExerciseTools = { signal, scope };
 	const phaseTools: PhaseTools = { signal };
-	const cleanupTools: CleanupTools = { signal: new AbortController().signal };
+	const cleanup = cleanupTools();
 	let completedSetup: { input: Input } | undefined;
 	let failure: { error: unknown } | undefined;
 	const cleanupErrors: unknown[] = [];
@@ -481,24 +683,37 @@ export async function executeDefinition<Input, Output>(
 		await skipPhase(emitter, "verify", "setup failed");
 	}
 
-	await runPhase(
+	async function cleanupAttempt() {
+		if (completedSetup && definition.teardown) {
+			try {
+				await definition.teardown(completedSetup.input, cleanup);
+			} catch (error) {
+				cleanupErrors.push(error);
+			}
+		}
+		cleanupErrors.push(...(await scope.close(cleanup)));
+	}
+
+	let cleaning: Promise<void> | undefined;
+	const teardown = await runPhase(
 		"teardown",
 		emitter,
 		async () => {
-			if (completedSetup && definition.teardown) {
-				try {
-					await definition.teardown(completedSetup.input, cleanupTools);
-				} catch (error) {
-					cleanupErrors.push(error);
-				}
-			}
-			cleanupErrors.push(...(await scope.close(cleanupTools)));
+			cleaning ??= cleanupAttempt();
+			await cleaning;
 			if (cleanupErrors.length === 1) throw cleanupErrors[0];
 			if (cleanupErrors.length > 1)
 				throw new AggregateError(cleanupErrors, "Testmint cleanup failed.");
 		},
 		options.executePhase,
 	);
+	if (cleaning === undefined) {
+		if (!teardown.ok) cleanupErrors.push(teardown.error);
+		await cleanupAttempt();
+	} else if (!teardown.ok) {
+		await cleaning;
+		if (cleanupErrors.length === 0) cleanupErrors.push(teardown.error);
+	}
 
 	const errors =
 		failure === undefined ? cleanupErrors : [failure.error, ...cleanupErrors];

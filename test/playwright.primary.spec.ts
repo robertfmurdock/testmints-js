@@ -315,6 +315,44 @@ test("a Playwright page and custom fixture remain available through every Testmi
 		teardown: () => lifecycle.calls.push("teardown"),
 	}));
 
+test("disposing an unused mint leaves its sibling usable", async () => {
+	let retiredStarts = 0;
+	const closedDirectories: URL[] = [];
+	const serviceMint = createMint({
+		shared: () => ({ baseUrl: "https://profiles.example.test/" }),
+		attempt: {
+			before: ({ baseUrl }) => ({ members: new URL("members/", baseUrl) }),
+		},
+	});
+	const retiredMint = serviceMint.extend({
+		shared: () => ({ initialization: ++retiredStarts }),
+	});
+	const directoryMint = serviceMint.extend({
+		attempt: {
+			before: ({ members }, { scope }) =>
+				scope.using(
+					"member directory",
+					() => ({ directory: members }),
+					({ directory }) => closedDirectories.push(directory),
+				),
+		},
+	});
+
+	await retiredMint.dispose();
+	await directoryMint({
+		setup: ({ directory }) => ({ directory, memberId: "ada" }),
+		exercise: ({ directory, memberId }) => new URL(memberId, directory),
+		verify: (link, { memberId }) => {
+			expect(link.pathname).toBe(`/members/${memberId}`);
+			expect(retiredStarts).toBe(0);
+		},
+	});
+	expect(closedDirectories.map((directory) => directory.pathname)).toEqual([
+		"/members/",
+	]);
+	await serviceMint.dispose();
+});
+
 test("template diagnostics run after scenario cleanup and retain the verification failure", async () => {
 	const events: string[] = [];
 	const failedVerification = new Error("profile display name is stale");

@@ -6,9 +6,13 @@ import type { Reporter } from "vitest/node";
 
 import {
 	bindTemplate,
+	type ConfiguredMint,
 	executeDefinition,
 	type HookedMintTemplateOptions,
 	type MintTemplateOptions,
+	type RegisterDisposal,
+	type SharedTools,
+	type TemplateBinding,
 	type TemplateDefinition,
 	type TestmintDefinition,
 	validateDefinition,
@@ -77,25 +81,42 @@ export function mint<Input, Output>(
 	return async (context) => runValidatedMint(validated, context);
 }
 
-type ConfiguredMint<Context> = <Input, Output>(
-	definition: TemplateDefinition<Context, Input, Output>,
-) => TestFunction;
-
 /** Configure a mint with lazy shared preparation and optional per-attempt hooks. */
 export function createMint<Shared, Context>(
+	options: HookedMintTemplateOptions<Shared, Context, [SharedTools]>,
+	registerDisposal: RegisterDisposal,
+): ConfiguredMint<Shared, Context, true, TestFunction>;
+export function createMint<Shared>(
+	options: MintTemplateOptions<Shared, [SharedTools]>,
+	registerDisposal: RegisterDisposal,
+): ConfiguredMint<Shared, Shared, true, TestFunction>;
+export function createMint<Shared, Context>(
 	options: HookedMintTemplateOptions<Shared, Context>,
-): ConfiguredMint<Context>;
+): ConfiguredMint<Shared, Context, false, TestFunction>;
 export function createMint<Shared>(
 	options: MintTemplateOptions<Shared>,
-): ConfiguredMint<Shared>;
-export function createMint(options: unknown): ConfiguredMint<unknown> {
-	const bind = bindTemplate(options);
-	return function mint<Input, Output>(
+): ConfiguredMint<Shared, Shared, false, TestFunction>;
+export function createMint(
+	options: unknown,
+	registerDisposal?: RegisterDisposal,
+) {
+	return configuredMint(bindTemplate(options, registerDisposal));
+}
+
+function configuredMint(
+	binding: TemplateBinding,
+): ConfiguredMint<unknown, unknown, boolean, TestFunction> {
+	function mint<Input, Output>(
 		definition: TemplateDefinition<unknown, Input, Output>,
 	): TestFunction {
-		const validated = bind(definition);
+		const validated = binding.bind(definition);
 		return async (context) => runValidatedMint(validated, context);
-	};
+	}
+
+	return Object.assign(mint, {
+		dispose: binding.dispose,
+		extend: (options: unknown) => configuredMint(binding.extend(options)),
+	});
 }
 
 class TestmintsReporter implements Reporter {
