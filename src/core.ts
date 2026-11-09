@@ -138,8 +138,22 @@ export interface SharedTools {
 	readonly scope: ResourceScope;
 }
 
-// A plain void return type would also accept promise-returning callbacks.
-export type RegisterDisposal<Result = unknown> = ((
+type RegistrationPrimitive =
+	| undefined
+	| null
+	| boolean
+	| number
+	| string
+	| bigint
+	| symbol;
+
+// Explicit mint type arguments leave the registrar result at its default.
+// Keep ordinary synchronous return values without the permissive plain void rule.
+export type SynchronousRegistration =
+	// biome-ignore lint/suspicious/noConfusingVoidType: Runner hooks such as afterAll return void.
+	void | RegistrationPrimitive | (object & { then?: RegistrationPrimitive });
+
+export type RegisterDisposal<Result = SynchronousRegistration> = ((
 	dispose: () => Promise<void>,
 ) => Result) &
 	(Extract<Result, PromiseLike<unknown>> extends never ? unknown : never);
@@ -305,7 +319,7 @@ export function createTemplate(options: unknown) {
 
 export function bindTemplate(
 	options: unknown,
-	registerDisposal?: RegisterDisposal,
+	registerDisposal?: RegisterDisposal<unknown>,
 ): TemplateBinding {
 	if (
 		registerDisposal !== undefined &&

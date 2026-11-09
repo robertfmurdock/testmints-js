@@ -13,6 +13,7 @@ import {
 	type MintTemplateOptions,
 	type RegisterDisposal,
 	type SharedTools,
+	type SynchronousRegistration,
 	type TemplateBinding,
 	type TemplateDefinition,
 	type TestmintDefinition,
@@ -83,11 +84,15 @@ export function mint<Input, Output>(
 }
 
 /** Configure a mint with lazy shared preparation, per-attempt hooks, or both. */
-export function createMint<Shared, Context, Registration = unknown>(
+export function createMint<
+	Shared,
+	Context,
+	Registration = SynchronousRegistration,
+>(
 	options: HookedMintTemplateOptions<Shared, Context, [SharedTools]>,
 	registerDisposal: RegisterDisposal<Registration>,
 ): ConfiguredMint<Shared, Context, true, TestFunction>;
-export function createMint<Shared, Registration = unknown>(
+export function createMint<Shared, Registration = SynchronousRegistration>(
 	options: MintTemplateOptions<Shared, [SharedTools]>,
 	registerDisposal: RegisterDisposal<Registration>,
 ): ConfiguredMint<Shared, Shared, true, TestFunction>;
@@ -97,7 +102,7 @@ export function createMint<Shared, Context>(
 export function createMint<Shared>(
 	options: MintTemplateOptions<Shared>,
 ): ConfiguredMint<Shared, Shared, false, TestFunction>;
-export function createMint<Context, Registration = unknown>(
+export function createMint<Context, Registration = SynchronousRegistration>(
 	options: AttemptOnlyMintTemplateOptions<Context>,
 	registerDisposal: RegisterDisposal<Registration>,
 ): ConfiguredMint<undefined, Context, true, TestFunction>;
@@ -106,7 +111,7 @@ export function createMint<Context>(
 ): ConfiguredMint<undefined, Context, false, TestFunction>;
 export function createMint(
 	options: unknown,
-	registerDisposal?: RegisterDisposal,
+	registerDisposal?: RegisterDisposal<unknown>,
 ) {
 	return configuredMint(bindTemplate(options, registerDisposal));
 }

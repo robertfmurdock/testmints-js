@@ -105,10 +105,26 @@ void checkPlaywrightTemplateTypes;
 function checkDisposalRegistrarTypes() {
 	const options = { shared: () => ({ port: 3000 }) };
 	const asyncRegistration = async () => {};
+	const callbacks: Array<() => Promise<void>> = [];
+	const register = (dispose: () => Promise<void>) => callbacks.push(dispose);
+	const registerWithHandle = (dispose: () => Promise<void>) => ({
+		id: register(dispose),
+		// biome-ignore lint/suspicious/noThenProperty: A non-callable then property is synchronous.
+		then: "registration label",
+	});
+
+	createMint<{ port: number }>(options, afterAll);
+	createMint<{ port: number }>(options, register);
+	createPlaywrightMint<{ port: number }>(options, registerWithHandle);
+
 	// @ts-expect-error Vitest requires disposal registration during mint creation.
 	createMint(options, asyncRegistration);
 	// @ts-expect-error Playwright requires disposal registration during mint creation.
 	createPlaywrightMint(options, asyncRegistration);
+	// @ts-expect-error Explicit shared types still require synchronous registration.
+	createMint<{ port: number }>(options, asyncRegistration);
+	// @ts-expect-error Explicit shared types still require synchronous registration.
+	createPlaywrightMint<{ port: number }>(options, asyncRegistration);
 }
 void checkDisposalRegistrarTypes;
 
