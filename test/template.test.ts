@@ -14,6 +14,27 @@ const profileLinkMint = createMint({
 	shared: () => ({ baseUrl: "https://profiles.example.test/" }),
 });
 
+const draftMint = createMint({
+	attempt: {
+		before: ({ scope }) =>
+			scope.using(
+				"profile draft",
+				() => new Map<string, string>(),
+				(draft) => draft.clear(),
+			),
+	},
+});
+
+test(
+	"a mint with only attempt hooks opens a draft for the scenario",
+	draftMint({
+		setup: (draft) => ({ draft, displayName: "Ada" }),
+		exercise: ({ draft, displayName }) => draft.set("displayName", displayName),
+		verify: (draft, { displayName }) =>
+			expect(draft.get("displayName")).toBe(displayName),
+	}),
+);
+
 test(
 	"a configured mint passes shared values into setup",
 	profileLinkMint({

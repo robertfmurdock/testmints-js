@@ -118,15 +118,19 @@ export interface HookedMintTemplateOptions<
 	Parent extends unknown[] = [],
 > {
 	shared: (...args: Args) => Awaitable<Shared>;
-	attempt: AttemptHooks<Shared, Context, Parent>;
+	attempt: AttemptHooks<
+		Context,
+		[shared: Shared, tools: SetupTools, ...Parent]
+	>;
 }
 
-interface AttemptHooks<Input, Context, Parent extends unknown[] = []> {
-	before: (
-		input: Input,
-		tools: SetupTools,
-		...parent: Parent
-	) => Awaitable<Context>;
+export interface AttemptOnlyMintTemplateOptions<Context> {
+	shared?: never;
+	attempt: AttemptHooks<Context, [tools: SetupTools]>;
+}
+
+interface AttemptHooks<Context, Args extends unknown[]> {
+	before: (...args: Args) => Awaitable<Context>;
 	after?: (context: Context, tools: CleanupTools) => Awaitable<unknown>;
 }
 
@@ -155,7 +159,7 @@ export interface ConfiguredMint<
 	dispose(): Promise<void>;
 	extend<ChildContext>(options: {
 		shared?: never;
-		attempt: AttemptHooks<Context, ChildContext>;
+		attempt: AttemptHooks<ChildContext, [parent: Context, tools: SetupTools]>;
 	}): ConfiguredMint<Shared, ChildContext, Managed, Result>;
 	extend<Child, ChildContext>(
 		options: HookedMintTemplateOptions<
@@ -304,15 +308,15 @@ export function bindTemplate(
 	return binding;
 }
 
-function validateInitializer(options: unknown, canInherit: boolean) {
+function validateInitializer(options: unknown, isRoot: boolean) {
 	const { shared, attempt } = isDefinitionCandidate(options) ? options : {};
-	const hooks = validateAttemptHooks(attempt);
-	if (shared === undefined && canInherit && hooks !== undefined) {
+	const hooks = validateAttemptHooks(attempt, isRoot && shared === undefined);
+	if (shared === undefined && hooks !== undefined) {
 		return { prepare: undefined, hooks };
 	}
 	if (typeof shared !== "function") {
 		throw new TypeError(
-			"A Testmint template requires a callable shared initializer.",
+			"A Testmint template requires a callable shared initializer or attempt hooks.",
 		);
 	}
 	return {
@@ -334,7 +338,7 @@ class TemplateLifetime {
 		private readonly managed: boolean,
 		private readonly parent?: TemplateLifetime,
 	) {
-		this.#initializer = validateInitializer(options, parent !== undefined);
+		this.#initializer = validateInitializer(options, parent === undefined);
 	}
 
 	binding(): TemplateBinding {
@@ -447,7 +451,7 @@ class TemplateLifetime {
 	}
 }
 
-function validateAttemptHooks(candidate: unknown) {
+function validateAttemptHooks(candidate: unknown, toolsOnly: boolean) {
 	if (candidate === undefined) return undefined;
 	const { before, after } = isDefinitionCandidate(candidate) ? candidate : {};
 	if (
@@ -463,7 +467,8 @@ function validateAttemptHooks(candidate: unknown) {
 			context: unknown,
 			tools: SetupTools,
 			...parent: unknown[]
-		): unknown => before(context, tools, ...parent),
+		): unknown =>
+			toolsOnly ? before(tools) : before(context, tools, ...parent),
 		after:
 			typeof after === "function"
 				? (context: unknown, tools: CleanupTools): unknown =>

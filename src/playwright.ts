@@ -4,6 +4,7 @@ import { test as playwrightTest } from "@playwright/test";
 import type { Reporter, TestCase, TestResult } from "@playwright/test/reporter";
 
 import {
+	type AttemptOnlyMintTemplateOptions,
 	bindTemplate,
 	type ConfiguredMint,
 	type EventSink,
@@ -84,7 +85,7 @@ export async function mint<Input, Output>(
 	return executePlaywrightMint(validateDefinition(definition));
 }
 
-/** Configure a mint with lazy shared preparation and optional per-attempt hooks. */
+/** Configure a mint with lazy shared preparation, per-attempt hooks, or both. */
 export function createMint<Shared, Context>(
 	options: HookedMintTemplateOptions<Shared, Context, [SharedTools]>,
 	registerDisposal: RegisterDisposal,
@@ -99,6 +100,13 @@ export function createMint<Shared, Context>(
 export function createMint<Shared>(
 	options: MintTemplateOptions<Shared>,
 ): ConfiguredMint<Shared, Shared, false, Promise<void>>;
+export function createMint<Context>(
+	options: AttemptOnlyMintTemplateOptions<Context>,
+	registerDisposal: RegisterDisposal,
+): ConfiguredMint<undefined, Context, true, Promise<void>>;
+export function createMint<Context>(
+	options: AttemptOnlyMintTemplateOptions<Context>,
+): ConfiguredMint<undefined, Context, false, Promise<void>>;
 export function createMint(
 	options: unknown,
 	registerDisposal?: RegisterDisposal,

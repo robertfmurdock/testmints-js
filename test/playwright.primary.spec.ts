@@ -358,12 +358,11 @@ test("template diagnostics run after scenario cleanup and retain the verificatio
 	const failedVerification = new Error("profile display name is stale");
 	const failedDiagnostics = new Error("diagnostics upload failed");
 	const workspaceMint = createMint({
-		shared: () => ({ token: "member-token" }),
 		attempt: {
-			before: ({ token }, { scope }) =>
+			before: ({ scope }) =>
 				scope.using(
 					"workspace",
-					() => ({ token, open: true }),
+					() => ({ token: "member-token", open: true }),
 					(workspace) => {
 						workspace.open = false;
 						events.push("close workspace");

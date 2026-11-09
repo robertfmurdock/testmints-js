@@ -114,9 +114,23 @@ continues to own scenario resources.
 
 ### Per-attempt before and after
 
+For a mint that only needs per-attempt setup, call `createMint({ attempt })` in either adapter.
+Its `before` hook receives setup tools directly. Its return value is the context for scenario
+setup and the optional `after` hook.
+
+```ts
+const draftMint = createMint({
+  attempt: {
+    before: ({ scope }) =>
+      scope.using('profile draft', openProfileDraft, draft => draft.close()),
+    after: draft => draft.saveDiagnostics(),
+  },
+})
+```
+
 `attempt.before` turns shared data into context for scenario setup and the optional
-`attempt.after`. Use the attempt scope for resources and `after` for work such as collecting
-diagnostics before those resources close.
+`attempt.after` when the mint also defines `shared`. Use the attempt scope for resources and
+`after` for work such as collecting diagnostics before those resources close.
 
 ```ts
 const workspaceMint = createMint({
@@ -174,7 +188,8 @@ const workspaceReportMint = workspaceMint.extend({
 ```
 
 Use `extend({ shared })` to derive new shared data from the parent's. A managed child receives
-its own shared scope.
+its own shared scope. An attempt-only root supplies `undefined` as the inherited shared value.
+It can register disposal to own shared resources acquired by its descendants.
 
 ```ts
 const adminMint = profileServiceMint.extend({

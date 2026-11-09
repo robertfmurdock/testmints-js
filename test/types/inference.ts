@@ -1,4 +1,4 @@
-import { test } from "vitest";
+import { afterAll, test } from "vitest";
 
 import { createMint as createPlaywrightMint } from "../../src/playwright.js";
 import { createMint, mint } from "../../src/vitest.js";
@@ -101,6 +101,48 @@ function checkPlaywrightTemplateTypes() {
 	});
 }
 void checkPlaywrightTemplateTypes;
+
+const profileSessionMint = createMint(
+	{
+		attempt: {
+			before: ({ signal }) => ({ signal }),
+			after: ({ signal }) => signal.throwIfAborted(),
+		},
+	},
+	afterAll,
+);
+
+const profileIndexMint = profileSessionMint.extend({
+	shared: (parent, { scope }) => {
+		const inherited: undefined = parent;
+		void inherited;
+		return scope.using(
+			"profile index",
+			() => new Map<string, URL>(),
+			() => {},
+		);
+	},
+	attempt: {
+		before: (index, _tools, { signal }) => ({ index, signal }),
+	},
+});
+
+test(
+	"infers shared and attempt context separately for descendants of an attempt-only mint",
+	profileIndexMint({
+		setup: ({ index, signal }) => {
+			signal.throwIfAborted();
+			// @ts-expect-error The profile index maps names to URLs.
+			index.set("ada", 42);
+			return index.get("ada");
+		},
+		exercise: (profile) => profile?.pathname,
+		verify: (path) => {
+			const profilePath: string | undefined = path;
+			void profilePath;
+		},
+	}),
+);
 
 const workspaceMint = createMint({
 	shared: async () => ({ token: "member-token" }),

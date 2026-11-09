@@ -5,6 +5,7 @@ import { inject } from "vitest";
 import type { Reporter } from "vitest/node";
 
 import {
+	type AttemptOnlyMintTemplateOptions,
 	bindTemplate,
 	type ConfiguredMint,
 	executeDefinition,
@@ -81,7 +82,7 @@ export function mint<Input, Output>(
 	return async (context) => runValidatedMint(validated, context);
 }
 
-/** Configure a mint with lazy shared preparation and optional per-attempt hooks. */
+/** Configure a mint with lazy shared preparation, per-attempt hooks, or both. */
 export function createMint<Shared, Context>(
 	options: HookedMintTemplateOptions<Shared, Context, [SharedTools]>,
 	registerDisposal: RegisterDisposal,
@@ -96,6 +97,13 @@ export function createMint<Shared, Context>(
 export function createMint<Shared>(
 	options: MintTemplateOptions<Shared>,
 ): ConfiguredMint<Shared, Shared, false, TestFunction>;
+export function createMint<Context>(
+	options: AttemptOnlyMintTemplateOptions<Context>,
+	registerDisposal: RegisterDisposal,
+): ConfiguredMint<undefined, Context, true, TestFunction>;
+export function createMint<Context>(
+	options: AttemptOnlyMintTemplateOptions<Context>,
+): ConfiguredMint<undefined, Context, false, TestFunction>;
 export function createMint(
 	options: unknown,
 	registerDisposal?: RegisterDisposal,
