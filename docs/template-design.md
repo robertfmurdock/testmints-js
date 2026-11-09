@@ -8,7 +8,13 @@ runner-owned page or request client.
 
 ## Authoring
 
-Export a configured mint from a project-local support module.
+Use `<purpose>Mint` for configured functions returned by `createMint`. Names such as
+`authenticatedMint`, `profileEditorMint`, and `workspaceMint` tell readers what context the
+template supplies. When a test file uses several templates, names like `memberMint` and
+`adminMint` make the choice visible at each call.
+
+A project-local support module can export a single configured function as `mint` when its path
+already names the purpose, as in `./support/authenticated-mint.js`.
 
 ```ts
 // support/authenticated-mint.ts
@@ -56,7 +62,8 @@ test('a member can read their profile', ({ request }) =>
 )
 ```
 
-Configured setup receives `(shared, tools)`. It chooses the attempt data that flows into the
+Configured setup receives `(context, tools)`. The context comes from `shared` by default or from
+the template's per-attempt `before` hook when configured. Setup chooses the data that flows into the
 remaining phases. Its tools and scoped resources belong to that attempt. Vitest validates each
 definition when creating the test callback. Playwright validates when the callback invokes mint.
 A project that requires a particular configured import can enforce it with an import lint rule.
@@ -94,7 +101,7 @@ the shared operation itself needs one. Worker termination can interrupt pending 
 Setup reporting measures the attempt's elapsed setup time, including its wait for shared data.
 It does not report a separate preparation event or attribute that wait to repeated sign-ins.
 
-## Template lifecycle extensions
+## Template lifecycle
 
 Kotlin Testmints has two lifetimes. Its `beforeAll` overload prepares a lazy cached value. Its
 `sharedSetup` and `sharedTeardown` pair runs around each test and retains both the test and
@@ -108,22 +115,29 @@ runner's own lifecycle facilities for resources those facilities own.
 
 ### Per-attempt before and after
 
-An opt-in pair on the factory options can run a template's before hook after shared preparation
-and before scenario setup. It receives the cached value and attempt tools and can return a new
-attempt context. Scenario setup receives that context as its first argument. Without the pair,
-setup continues to receive the cached value directly. For example, a before hook could open a
-temporary workspace using shared credentials, and an after hook could collect diagnostics while
-that workspace is still open.
+Both adapters accept `attempt: { before, after }` on `createMint`. The `before` hook receives the
+cached value and attempt setup tools. Its return value becomes the context for scenario setup
+and for `after`, which receives cleanup tools. For example, use shared credentials to open a
+temporary workspace per attempt and collect diagnostics before closing it.
 
-Register the after hook in the attempt's existing cleanup stack when the before hook succeeds.
-Scenario teardown and scenario resource releases then run first, followed by template after and
-the resources acquired by template before. If before fails partway through, release the resources
-it already registered. If scenario setup fails, the registered template after still runs.
-Retain hook and release failures alongside the primary failure. The executor continues to own
-phase execution, including on retries. The hooks can run inside the existing setup and teardown
-reporting boundaries.
+```ts
+const workspaceMint = createMint({
+  shared: () => authenticate(),
+  attempt: {
+    before: ({ accessToken }, { scope }) =>
+      scope.using('workspace', () => openWorkspace(accessToken), workspace => workspace.close()),
+    after: workspace => workspace.uploadDiagnostics(),
+  },
+})
+```
 
-### Disposal of cached resources
+The hooks run within the existing setup and teardown phases, including on retries. Once
+`before` succeeds, scenario teardown and scenario resource releases run before `after`. Resources
+acquired by `before` are released after `after` completes. If scenario setup fails, `after` still
+runs. If `before` fails, cleanup releases the resources it already registered. Hook and release
+failures are retained alongside the primary failure.
+
+### Future disposal of cached resources
 
 An opt-in managed template can give `shared` a template-owned scope with the same acquisition and
 release interface as the attempt scope. Existing zero-argument initializers still fit that

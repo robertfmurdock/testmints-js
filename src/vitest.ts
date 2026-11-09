@@ -5,8 +5,9 @@ import { inject } from "vitest";
 import type { Reporter } from "vitest/node";
 
 import {
-	createTemplate,
+	bindTemplate,
 	executeDefinition,
+	type HookedMintTemplateOptions,
 	type MintTemplateOptions,
 	type TemplateDefinition,
 	type TestmintDefinition,
@@ -76,11 +77,21 @@ export function mint<Input, Output>(
 	return async (context) => runValidatedMint(validated, context);
 }
 
-/** Configure a Vitest mint with preparation shared by this template's attempts. */
-export function createMint<Shared>(options: MintTemplateOptions<Shared>) {
-	const bind = createTemplate(options);
+type ConfiguredMint<Context> = <Input, Output>(
+	definition: TemplateDefinition<Context, Input, Output>,
+) => TestFunction;
+
+/** Configure a mint with lazy shared preparation and optional per-attempt hooks. */
+export function createMint<Shared, Context>(
+	options: HookedMintTemplateOptions<Shared, Context>,
+): ConfiguredMint<Context>;
+export function createMint<Shared>(
+	options: MintTemplateOptions<Shared>,
+): ConfiguredMint<Shared>;
+export function createMint(options: unknown): ConfiguredMint<unknown> {
+	const bind = bindTemplate(options);
 	return function mint<Input, Output>(
-		definition: TemplateDefinition<Shared, Input, Output>,
+		definition: TemplateDefinition<unknown, Input, Output>,
 	): TestFunction {
 		const validated = bind(definition);
 		return async (context) => runValidatedMint(validated, context);

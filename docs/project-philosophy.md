@@ -11,6 +11,10 @@ harness. All runtime tests visibly register with Vitest using `test(name, mint(d
 that is genuinely impossible; calls to lower-level core APIs belong inside a `mint` phase when
 those APIs are the behavior under evidence.
 
+Organize related tests so readers can learn the feature in order. Start with the smallest complete
+example, then build toward cases that introduce additional options, runner behavior, or failure
+handling.
+
 Prefer linear setup, exercise, verification, and teardown. Keep assertions in `verify` whenever the
 scenario permits it. A test can have several assertions when they describe one scenario; do not
 split or combine tests merely to satisfy an assertion-count rule.

@@ -4,9 +4,10 @@ import { test as playwrightTest } from "@playwright/test";
 import type { Reporter, TestCase, TestResult } from "@playwright/test/reporter";
 
 import {
-	createTemplate,
+	bindTemplate,
 	type EventSink,
 	executeDefinition,
+	type HookedMintTemplateOptions,
 	type MintTemplateOptions,
 	type TemplateDefinition,
 	type TestmintDefinition,
@@ -79,11 +80,21 @@ export async function mint<Input, Output>(
 	return executePlaywrightMint(validateDefinition(definition));
 }
 
-/** Configure a Playwright mint with preparation shared by this template's attempts. */
-export function createMint<Shared>(options: MintTemplateOptions<Shared>) {
-	const bind = createTemplate(options);
+type ConfiguredMint<Context> = <Input, Output>(
+	definition: TemplateDefinition<Context, Input, Output>,
+) => Promise<void>;
+
+/** Configure a mint with lazy shared preparation and optional per-attempt hooks. */
+export function createMint<Shared, Context>(
+	options: HookedMintTemplateOptions<Shared, Context>,
+): ConfiguredMint<Context>;
+export function createMint<Shared>(
+	options: MintTemplateOptions<Shared>,
+): ConfiguredMint<Shared>;
+export function createMint(options: unknown): ConfiguredMint<unknown> {
+	const bind = bindTemplate(options);
 	return async function mint<Input, Output>(
-		definition: TemplateDefinition<Shared, Input, Output>,
+		definition: TemplateDefinition<unknown, Input, Output>,
 	): Promise<void> {
 		return executePlaywrightMint(bind(definition));
 	};

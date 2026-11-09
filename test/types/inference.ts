@@ -18,37 +18,6 @@ test(
 );
 
 test(
-	"infers configured Vitest phase data",
-	createMint({ shared: async () => ({ token: "member-token" }) })({
-		setup: ({ token }, { signal }) => ({ token, signal }),
-		exercise: async ({ token }) => token.length,
-		verify: (length, input) => {
-			const size: number = length;
-			const signal: AbortSignal = input.signal;
-			void size;
-			void signal;
-		},
-	}),
-);
-
-function checkPlaywrightTemplateTypes() {
-	const preparedMint = createPlaywrightMint({ shared: () => ({ port: 3000 }) });
-	return preparedMint({
-		setup: (server) => {
-			// @ts-expect-error The configured context contains a port, not a URL.
-			void server.url;
-			return server.port;
-		},
-		exercise: (port) => `http://localhost:${port.toFixed()}`,
-		verify: (url) => {
-			const address: string = url;
-			void address;
-		},
-	});
-}
-void checkPlaywrightTemplateTypes;
-
-test(
 	"permits void exercise output",
 	mint({
 		setup: (): { messages: string[] } => ({ messages: [] }),
@@ -94,6 +63,75 @@ test(
 		teardown: ({ connection }) => {
 			const _: string = connection.id;
 			void _;
+		},
+	}),
+);
+
+const authenticatedMint = createMint({
+	shared: async () => ({ token: "member-token" }),
+});
+
+test(
+	"infers configured Vitest phase data",
+	authenticatedMint({
+		setup: ({ token }, { signal }) => ({ token, signal }),
+		exercise: async ({ token }) => token.length,
+		verify: (length, input) => {
+			const size: number = length;
+			const signal: AbortSignal = input.signal;
+			void size;
+			void signal;
+		},
+	}),
+);
+
+function checkPlaywrightTemplateTypes() {
+	const serverMint = createPlaywrightMint({ shared: () => ({ port: 3000 }) });
+	return serverMint({
+		setup: (server) => {
+			// @ts-expect-error The configured context contains a port, not a URL.
+			void server.url;
+			return server.port;
+		},
+		exercise: (port) => `http://localhost:${port.toFixed()}`,
+		verify: (url) => {
+			const address: string = url;
+			void address;
+		},
+	});
+}
+void checkPlaywrightTemplateTypes;
+
+const workspaceMint = createMint({
+	shared: async () => ({ token: "member-token" }),
+	attempt: {
+		before: async ({ token }, { scope }) =>
+			scope.using(
+				"workspace",
+				() => ({ id: token.length }),
+				() => undefined,
+			),
+		after: ({ id }, { signal }) => {
+			const workspaceId: number = id;
+			const cleanupSignal: AbortSignal = signal;
+			void workspaceId;
+			void cleanupSignal;
+		},
+	},
+});
+
+test(
+	"infers the attempt context separately from shared credentials",
+	workspaceMint({
+		setup: (workspace) => {
+			// @ts-expect-error Scenario setup receives the workspace from before.
+			void workspace.token;
+			return workspace.id;
+		},
+		exercise: (id) => id.toFixed(),
+		verify: (label) => {
+			const name: string = label;
+			void name;
 		},
 	}),
 );

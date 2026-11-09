@@ -259,12 +259,22 @@ test("expected rejection remains data for ordinary verification", () =>
 	}));
 
 let preparations = 0;
-const preparedMint = createMint({
+const sharedMarkupMint = createMint({
 	shared: async () => ({ pageContent: `<main>hello ${++preparations}</main>` }),
 });
 
+test("a page fixture renders shared template markup", ({ page }) =>
+	sharedMarkupMint({
+		setup: async ({ pageContent }) => {
+			await page.setContent(pageContent);
+			return page.getByRole("main");
+		},
+		exercise: (main) => main.textContent(),
+		verify: (content) => expect(content).toBe("hello 1"),
+	}));
+
 test("a retry receives a fresh Testmints attempt", () =>
-	preparedMint({
+	sharedMarkupMint({
 		setup: ({ pageContent }) => {
 			if (test.info().retry === 0) throw new Error("retry once");
 			return pageContent;
@@ -280,7 +290,7 @@ test("a Playwright page and custom fixture remain available through every Testmi
 	page,
 	lifecycle,
 }) =>
-	preparedMint({
+	sharedMarkupMint({
 		setup: async ({ pageContent }, { scope }) => {
 			lifecycle.calls.push("setup");
 			await page.setContent(pageContent);
@@ -304,3 +314,54 @@ test("a Playwright page and custom fixture remain available through every Testmi
 		},
 		teardown: () => lifecycle.calls.push("teardown"),
 	}));
+
+test("template diagnostics run after scenario cleanup and retain the verification failure", async () => {
+	const events: string[] = [];
+	const failedVerification = new Error("profile display name is stale");
+	const failedDiagnostics = new Error("diagnostics upload failed");
+	const workspaceMint = createMint({
+		shared: () => ({ token: "member-token" }),
+		attempt: {
+			before: ({ token }, { scope }) =>
+				scope.using(
+					"workspace",
+					() => ({ token, open: true }),
+					(workspace) => {
+						workspace.open = false;
+						events.push("close workspace");
+					},
+				),
+			after: (workspace) => {
+				expect(workspace.open).toBe(true);
+				events.push("collect diagnostics");
+				throw failedDiagnostics;
+			},
+		},
+	});
+	const error = await captureError(() =>
+		workspaceMint({
+			setup: async ({ token }, { scope }) => ({
+				expectedName: "Ada",
+				profile: await scope.using(
+					"profile editor",
+					() => ({ token, displayName: "Ada Lovelace" }),
+					() => events.push("close profile editor"),
+				),
+			}),
+			exercise: ({ profile }) => profile.displayName,
+			verify: (displayName, { expectedName }) => {
+				if (displayName !== expectedName) throw failedVerification;
+			},
+			teardown: () => events.push("save scenario log"),
+		}),
+	);
+	expect(error).toBeInstanceOf(AggregateError);
+	if (error instanceof AggregateError)
+		expect(error.errors).toEqual([failedVerification, failedDiagnostics]);
+	expect(events).toEqual([
+		"save scenario log",
+		"close profile editor",
+		"collect diagnostics",
+		"close workspace",
+	]);
+});

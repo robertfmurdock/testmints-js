@@ -33,7 +33,10 @@ clearer—for example, in a parameterized test—use `runMint(definition, contex
 callback instead.
 
 Both adapters offer `createMint({ shared })` for lazy preparation shared by a configured mint
-instance. See [test templates](docs/template-design.md) for examples and lifecycle details.
+instance. Name configured functions for their purpose, such as `authenticatedMint` or
+`workspaceMint`. A support module that provides one configured function can export it as `mint`
+when the module path names its purpose. See [test templates](docs/template-design.md) for examples
+and lifecycle details.
 
 ## Local phase artifacts with Vitest
 

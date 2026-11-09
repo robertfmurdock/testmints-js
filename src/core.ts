@@ -101,14 +101,27 @@ export interface TestmintDefinition<Input, Output> {
 	teardown?: (input: Input, tools: CleanupTools) => Awaitable<unknown>;
 }
 
-export interface TemplateDefinition<Shared, Input, Output>
+export interface TemplateDefinition<Context, Input, Output>
 	extends Omit<TestmintDefinition<Input, Output>, "setup"> {
-	setup: (shared: Shared, tools: SetupTools) => Awaitable<Input>;
+	setup: (context: Context, tools: SetupTools) => Awaitable<Input>;
 }
 
 export interface MintTemplateOptions<Shared> {
 	shared: () => Awaitable<Shared>;
+	attempt?: never;
 }
+
+export interface HookedMintTemplateOptions<Shared, Context> {
+	shared: () => Awaitable<Shared>;
+	attempt: {
+		before: (shared: Shared, tools: SetupTools) => Awaitable<Context>;
+		after: (context: Context, tools: CleanupTools) => Awaitable<unknown>;
+	};
+}
+
+type TemplateBinder<Context> = <Input, Output>(
+	candidate: TemplateDefinition<Context, Input, Output>,
+) => ValidatedDefinition<Input, Output>;
 
 export type ValidatedDefinition<Input, Output> = Readonly<
 	TestmintDefinition<Input, Output>
@@ -205,29 +218,64 @@ function validatePhases(
 	);
 }
 
-export function createTemplate<Shared>(options: MintTemplateOptions<Shared>) {
-	const shared = isDefinitionCandidate(options) ? options.shared : undefined;
+export function createTemplate<Shared, Context>(
+	options: HookedMintTemplateOptions<Shared, Context>,
+): TemplateBinder<Context>;
+export function createTemplate<Shared>(
+	options: MintTemplateOptions<Shared>,
+): TemplateBinder<Shared>;
+export function createTemplate(options: unknown) {
+	return bindTemplate(options);
+}
+
+export function bindTemplate(options: unknown): TemplateBinder<unknown> {
+	const { shared, attempt } = isDefinitionCandidate(options) ? options : {};
 	if (typeof shared !== "function") {
 		throw new TypeError(
 			"A Testmint template requires a callable shared initializer.",
 		);
 	}
-	let preparation: Promise<Shared> | undefined;
+	const prepare = shared;
+	const hooks = validateAttemptHooks(attempt);
+	let preparation: Promise<unknown> | undefined;
 
 	function bind<Input, Output>(
-		candidate: TemplateDefinition<Shared, Input, Output>,
+		candidate: TemplateDefinition<unknown, Input, Output>,
 	): ValidatedDefinition<Input, Output>;
 	function bind(candidate: unknown): ValidatedDefinition<unknown, unknown> {
 		return validatePhases(candidate, async (setup, tools) => {
 			tools.signal.throwIfAborted();
-			preparation ??= Promise.resolve().then(shared);
+			preparation ??= Promise.resolve().then(() => prepare());
 			const context = await preparation;
 			tools.signal.throwIfAborted();
-			return setup(context, tools);
+			if (hooks === undefined) return setup(context, tools);
+
+			const attemptContext = await hooks.before(context, tools);
+			tools.scope.defer("template after", (cleanup) =>
+				hooks.after(attemptContext, cleanup),
+			);
+			tools.signal.throwIfAborted();
+			return setup(attemptContext, tools);
 		});
 	}
 
 	return bind;
+}
+
+function validateAttemptHooks(candidate: unknown) {
+	if (candidate === undefined) return undefined;
+	const { before, after } = isDefinitionCandidate(candidate) ? candidate : {};
+	if (typeof before !== "function" || typeof after !== "function") {
+		throw new TypeError(
+			"Testmint template attempt hooks require callable before and after hooks.",
+		);
+	}
+	return {
+		before: (context: unknown, tools: SetupTools): unknown =>
+			before(context, tools),
+		after: (context: unknown, tools: CleanupTools): unknown =>
+			after(context, tools),
+	};
 }
 
 class AttemptScope implements ResourceScope {
