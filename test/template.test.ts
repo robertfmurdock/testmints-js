@@ -129,20 +129,27 @@ test.describe("a suite owns a shared service and its specialized mints", () => {
 		(dispose) =>
 			afterAll(async () => {
 				await dispose();
-				expect(events).toEqual([
-					"open service",
-					"start member session",
-					"open admin connection",
-					"start admin session",
-					"end admin session",
-					"end member session",
-					"start member session",
-					"end member session",
-					"start member session",
-					"end member session",
-					"close admin connection",
-					"close service",
-				]);
+				const sharedEvents = events.filter(
+					(event) => event.startsWith("open ") || event.startsWith("close "),
+				);
+				const adminStart = events.indexOf("start admin session");
+				if (adminStart === -1) {
+					expect(sharedEvents).toEqual(["open service", "close service"]);
+				} else {
+					expect(sharedEvents).toEqual([
+						"open service",
+						"open admin connection",
+						"close admin connection",
+						"close service",
+					]);
+					expect(events.slice(adminStart - 2, adminStart + 3)).toEqual([
+						"start member session",
+						"open admin connection",
+						"start admin session",
+						"end admin session",
+						"end member session",
+					]);
+				}
 			}),
 	);
 
@@ -173,29 +180,37 @@ test.describe("a suite owns a shared service and its specialized mints", () => {
 		},
 	});
 
-	// All three callbacks use one runner context and one suite-owned lifetime.
-	test("a suite unwinds specialized mints before releasing their shared service", async (context) => {
-		await adminMint({
+	test(
+		"an administrator can build a member management link",
+		adminMint({
 			setup: (session) => ({ ...session, memberId: "ada" }),
 			exercise: ({ adminPage, memberId }) => new URL(memberId, adminPage),
 			verify: (link, { memberPage, memberId }) => {
 				expect(link.origin).toBe(memberPage.origin);
 				expect(link.pathname).toBe(`/admin/${memberId}`);
 			},
-		})(context);
-		await auditMint({
+		}),
+	);
+
+	test(
+		"a reviewer can build a link to the sign-in audit",
+		auditMint({
 			setup: ({ auditPage }) => ({ auditPage, entry: "sign-ins" }),
 			exercise: ({ auditPage, entry }) => new URL(entry, auditPage),
 			verify: (link, { entry }) =>
 				expect(link.pathname).toBe(`/audit/${entry}`),
-		})(context);
-		await serviceMint({
+		}),
+	);
+
+	test(
+		"a member can build a profile link",
+		serviceMint({
 			setup: ({ memberPage }) => ({ memberPage, memberId: "ada" }),
 			exercise: ({ memberPage, memberId }) => new URL(memberId, memberPage),
 			verify: (link, { memberId }) =>
 				expect(link.pathname).toBe(`/members/${memberId}`),
-		})(context);
-	});
+		}),
+	);
 });
 
 function gate() {

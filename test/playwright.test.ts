@@ -194,6 +194,28 @@ test(
 );
 
 test(
+	"a Playwright worker shares one profile directory across tests and closes it at shutdown",
+	mint({
+		setup: () => resolve("test/playwright.worker.config.ts"),
+		exercise: (config) =>
+			run(process.execPath, [
+				"node_modules/@playwright/test/cli.js",
+				"test",
+				"-c",
+				config,
+				"--reporter=list",
+			]),
+		verify: ({ stdout }) => {
+			const events = Array.from(
+				stdout.matchAll(/profile directory: (open|read|close)/g),
+				([, event]) => event,
+			);
+			expect(events).toEqual(["open", "read", "read", "close"]);
+		},
+	}),
+);
+
+test(
 	"a Playwright worker fixture surfaces shared disposal failure at shutdown",
 	mint({
 		setup: () => "worker could not close the profile service",

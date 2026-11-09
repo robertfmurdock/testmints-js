@@ -166,8 +166,39 @@ const profileServiceMint = createMint({
 ```
 
 For Playwright, create the mint in a worker fixture. Capture the registered callback and await it
-in the fixture's `finally` block after `await use(configuredMint)`. Both runners report disposal
-failures through their native teardown. A module import supplies no runner lifecycle boundary.
+in the fixture's `finally` block. Tests using the fixture in the same worker share the configured
+mint and its cached resource.
+
+```ts
+import { test as base } from '@playwright/test'
+import { createMint } from '@continuous-excellence/testmints-js/playwright'
+import { openProfileDirectory } from './profile-api.js'
+
+function createDirectoryMint(registerDisposal: (dispose: () => Promise<void>) => void) {
+  return createMint({
+    shared: ({ scope }) =>
+      scope.using('profile directory', openProfileDirectory, directory => directory.close()),
+  }, registerDisposal)
+}
+
+export const test = base.extend<object, {
+  directoryMint: ReturnType<typeof createDirectoryMint>
+}>({
+  directoryMint: [async ({}, use) => {
+    let dispose: (() => Promise<void>) | undefined
+    const directoryMint = createDirectoryMint(close => { dispose = close })
+    try {
+      await use(directoryMint)
+    } finally {
+      await dispose?.()
+    }
+  }, { scope: 'worker' }],
+})
+```
+
+See the [worker fixture test](../test/playwright.worker.spec.ts) for two tests using the same
+directory. Both runners report disposal failures through their native teardown. A module import
+supplies no runner lifecycle boundary.
 
 Disposal rejects new attempts, lets admitted attempts finish preparation and cleanup, and releases
 shared resources once, in reverse acquisition order within each scope. Closing an unused mint
