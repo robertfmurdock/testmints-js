@@ -69,8 +69,13 @@ jobs:
         run: |
           version="$(npm run --silent release:version)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == "0.0.0" || "$version" == *-SNAPSHOT ]]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Refuse an existing npm version
-        if: steps.version.outputs.version != '0.0.0'
+        if: steps.version.outputs.publish == 'true'
         env:
           PACKAGE: "@continuous-excellence/testmints-js"
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
@@ -81,20 +86,20 @@ jobs:
             exit 1
           }
       - name: Build the release tarball
-        if: steps.version.outputs.version != '0.0.0'
+        if: steps.version.outputs.publish == 'true'
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: npm run release:pack
       - name: Verify the release tarball as a consumer
-        if: steps.version.outputs.version != '0.0.0'
+        if: steps.version.outputs.publish == 'true'
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: npm run release:verify -- .release/*.tgz
       - name: Publish with npm trusted publishing
-        if: steps.version.outputs.version != '0.0.0'
+        if: steps.version.outputs.publish == 'true'
         run: npm publish .release/*.tgz --access public
       - name: Confirm npm publication
-        if: steps.version.outputs.version != '0.0.0'
+        if: steps.version.outputs.publish == 'true'
         env:
           PACKAGE: "@continuous-excellence/testmints-js"
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
@@ -107,7 +112,7 @@ jobs:
           done
           exit 1
       - name: Tag the published release
-        if: steps.version.outputs.version != '0.0.0'
+        if: steps.version.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: npm run --silent release:tag -- "${{ steps.version.outputs.version }}"

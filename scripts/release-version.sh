@@ -7,8 +7,8 @@ else
 	version="0.0.0"
 fi
 
-if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-	echo "Invalid stable release version: '$version'" >&2
+if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-SNAPSHOT)?$ ]]; then
+	echo "Invalid release version: '$version'" >&2
 	exit 1
 fi
 
