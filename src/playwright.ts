@@ -156,6 +156,7 @@ function attachment(result: TestResult) {
 /** Aggregate attached phase streams into local Testmints artifacts. */
 export class TestmintsPlaywrightReporter implements Reporter {
 	#incomplete = false;
+	#pendingResults = Promise.resolve();
 	readonly #context: ReportingContext;
 	readonly #sink: NdjsonEventSink;
 
@@ -179,7 +180,18 @@ export class TestmintsPlaywrightReporter implements Reporter {
 		}
 	}
 
-	async onTestEnd(testCase: TestCase, result: TestResult): Promise<void> {
+	onTestEnd(testCase: TestCase, result: TestResult): Promise<void> {
+		// Playwright can deliver another result before the previous write finishes.
+		this.#pendingResults = this.#pendingResults.then(() =>
+			this.recordResult(testCase, result),
+		);
+		return this.#pendingResults;
+	}
+
+	private async recordResult(
+		testCase: TestCase,
+		result: TestResult,
+	): Promise<void> {
 		if (result.status === "timedOut" || result.status === "interrupted") {
 			this.#incomplete = true;
 		}
@@ -224,6 +236,7 @@ export class TestmintsPlaywrightReporter implements Reporter {
 
 	async onEnd(): Promise<void> {
 		try {
+			await this.#pendingResults;
 			await completeManifest(
 				this.#context,
 				this.#incomplete ? "incomplete" : "complete",

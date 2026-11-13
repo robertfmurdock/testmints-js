@@ -25,6 +25,21 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
       - run: npm run check
+      - name: Collect dashboard test results
+        if: always()
+        run: |
+          test_status=0
+          npx vitest run --reporter=json --outputFile=check-results/vitest-results.json || test_status=$?
+          node scripts/dashboard-test-summary.mjs
+          exit "$test_status"
+      - name: Upload dashboard test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-evidence
+          path: check-results/test-summary.json
+          if-no-files-found: error
+          retention-days: 90
 
   release:
     if: github.ref == 'refs/heads/main'
