@@ -1,0 +1,93 @@
+name: Update npm dependencies
+
+on:
+  schedule:
+    - cron: "17 5,11,17,23 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-dependency-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Pin npm
+        run: |
+          cd "$RUNNER_TEMP"
+          npm install --global npm@11.19.1
+          test "$(npm --version)" = "11.19.1"
+
+      - name: Update development dependencies and refresh the lockfile
+        run: |
+          npm exec --yes --ignore-scripts --package=npm-check-updates@23.1.1 -- ncu --dep dev --upgrade
+          npm update --package-lock-only --ignore-scripts
+
+      - name: Open an update pull request
+        env:
+          # A repository-scoped token lets the PR's push trigger Check and publish.
+          GH_TOKEN: ${{ secrets.DEPENDENCY_UPDATE_TOKEN }}
+        run: |
+          if [[ -n "$(git status --porcelain -- . ':!package.json' ':!package-lock.json')" ]]; then
+            echo "::error::The updater changed files outside package.json and package-lock.json."
+            exit 1
+          fi
+          if git diff --quiet HEAD -- package.json package-lock.json; then
+            echo "npm dependencies are current."
+            exit 0
+          fi
+
+          branch="automation/npm-dependencies-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --create "$branch"
+          git add -- package.json package-lock.json
+          git commit -m "chore: update npm dependencies"
+          gh auth setup-git
+          git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          open_branches="$(gh pr list --base main --limit 100 --json headRefName,isCrossRepository \
+            --jq '.[] | select(.isCrossRepository == false) | .headRefName | select(startswith("automation/npm-dependencies-"))')"
+          while IFS= read -r open_branch; do
+            [[ -n "$open_branch" ]] || continue
+            git fetch --no-tags origin "refs/heads/$open_branch"
+            if git diff --quiet FETCH_HEAD HEAD -- package.json package-lock.json; then
+              if ! git merge-base --is-ancestor HEAD^ FETCH_HEAD; then
+                gh pr update-branch "$open_branch"
+              fi
+              echo "An open pull request already contains these dependency updates."
+              exit 0
+            fi
+          done <<< "$open_branches"
+          git push --set-upstream origin "$branch"
+
+          if ! pr_url="$(gh pr create --base main --head "$branch" \
+            --title "chore: update npm dependencies" \
+            --body "Scheduled npm development dependency and lockfile updates. The Check and publish workflow validates this branch.")"; then
+            git push origin --delete "$branch"
+            exit 1
+          fi
+
+          if gh api "repos/${GITHUB_REPOSITORY}/rules/branches/main" --jq '
+            any(.[]; .type == "required_status_checks"
+              and .parameters.strict_required_status_checks_policy
+              and any(.parameters.required_status_checks[]; .context == "check" and .integration_id == 15368))
+          ' | grep -qx true; then
+            gh pr merge --rebase --auto "$pr_url"
+          else
+            echo "::warning::Auto-merge requires a main ruleset with the GitHub Actions check job required and branches kept up to date."
+          fi
