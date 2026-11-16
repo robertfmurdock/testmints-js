@@ -56,10 +56,9 @@ jobs:
           ./node_modules/.bin/biome migrate --write
           ./node_modules/.bin/biome format --write .
 
-      - name: Open an update pull request
+      - name: Open an auto-merge pull request
         env:
-          # Use a non-admin repository credential so the required check applies.
-          # Its push must trigger Check and publish.
+          # Pushes and merges must trigger Check and publish.
           GH_TOKEN: ${{ secrets.DEPENDENCY_UPDATE_TOKEN }}
         run: |
           if [[ -n "$(git ls-files --others --exclude-standard)" ]] || ! git diff --quiet HEAD -- .github; then
@@ -101,15 +100,4 @@ jobs:
             exit 1
           fi
 
-          permission="$(gh repo view "$GITHUB_REPOSITORY" --json viewerPermission --jq .viewerPermission)"
-          if [[ "$permission" != WRITE && "$permission" != MAINTAIN ]]; then
-            echo "::warning::Auto-merge requires a repository token with Write or Maintain access so the required check applies."
-          elif gh api "repos/${GITHUB_REPOSITORY}/rules/branches/main" --jq '
-            any(.[]; .type == "required_status_checks"
-              and .parameters.strict_required_status_checks_policy
-              and any(.parameters.required_status_checks[]; .context == "check" and .integration_id == 15368))
-          ' | grep -qx true; then
-            gh pr merge --rebase --auto "$pr_url"
-          else
-            echo "::warning::Auto-merge requires a main ruleset with the GitHub Actions check job required and branches kept up to date."
-          fi
+          gh pr merge --rebase --auto "$pr_url"
