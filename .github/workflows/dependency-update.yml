@@ -34,20 +34,39 @@ jobs:
           test "$(npm --version)" = "11.19.1"
 
       - name: Update development dependencies and refresh the lockfile
+        id: dependencies
         run: |
+          biome_version_expression='require("./package-lock.json").packages["node_modules/@biomejs/biome"].version'
+          previous_biome_version="$(node -p "$biome_version_expression")"
           npm exec --yes --ignore-scripts --package=npm-check-updates@23.1.1 -- ncu --dep dev --upgrade
           npm update --package-lock-only --ignore-scripts
-
-      - name: Open an update pull request
-        env:
-          # A repository-scoped token lets the PR's push trigger Check and publish.
-          GH_TOKEN: ${{ secrets.DEPENDENCY_UPDATE_TOKEN }}
-        run: |
           if [[ -n "$(git status --porcelain -- . ':!package.json' ':!package-lock.json')" ]]; then
             echo "::error::The updater changed files outside package.json and package-lock.json."
             exit 1
           fi
-          if git diff --quiet HEAD -- package.json package-lock.json; then
+          updated_biome_version="$(node -p "$biome_version_expression")"
+          if [[ "$previous_biome_version" != "$updated_biome_version" ]]; then
+            echo "biome_changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Migrate Biome configuration and format
+        if: steps.dependencies.outputs.biome_changed == 'true'
+        run: |
+          npm ci --ignore-scripts
+          ./node_modules/.bin/biome migrate --write
+          ./node_modules/.bin/biome format --write .
+
+      - name: Open an update pull request
+        env:
+          # Use a non-admin repository credential so the required check applies.
+          # Its push must trigger Check and publish.
+          GH_TOKEN: ${{ secrets.DEPENDENCY_UPDATE_TOKEN }}
+        run: |
+          if [[ -n "$(git ls-files --others --exclude-standard)" ]] || ! git diff --quiet HEAD -- .github; then
+            echo "::error::The update created untracked files or modified GitHub configuration."
+            exit 1
+          fi
+          if git diff --quiet HEAD; then
             echo "npm dependencies are current."
             exit 0
           fi
@@ -56,8 +75,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch --create "$branch"
-          git add -- package.json package-lock.json
-          git commit -m "chore: update npm dependencies"
+          git add --update
+          git commit -m "[patch] update npm dependencies"
           gh auth setup-git
           git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
           open_branches="$(gh pr list --base main --limit 100 --json headRefName,isCrossRepository \
@@ -65,7 +84,7 @@ jobs:
           while IFS= read -r open_branch; do
             [[ -n "$open_branch" ]] || continue
             git fetch --no-tags origin "refs/heads/$open_branch"
-            if git diff --quiet FETCH_HEAD HEAD -- package.json package-lock.json; then
+            if git diff --quiet FETCH_HEAD HEAD -- package.json package-lock.json biome.json; then
               if ! git merge-base --is-ancestor HEAD^ FETCH_HEAD; then
                 gh pr update-branch "$open_branch"
               fi
@@ -76,13 +95,16 @@ jobs:
           git push --set-upstream origin "$branch"
 
           if ! pr_url="$(gh pr create --base main --head "$branch" \
-            --title "chore: update npm dependencies" \
-            --body "Scheduled npm development dependency and lockfile updates. The Check and publish workflow validates this branch.")"; then
+            --title "[patch] update npm dependencies" \
+            --body "Scheduled npm dependency updates with Biome configuration migration and formatting when Biome changes. The Check and publish workflow validates this branch.")"; then
             git push origin --delete "$branch"
             exit 1
           fi
 
-          if gh api "repos/${GITHUB_REPOSITORY}/rules/branches/main" --jq '
+          permission="$(gh repo view "$GITHUB_REPOSITORY" --json viewerPermission --jq .viewerPermission)"
+          if [[ "$permission" != WRITE && "$permission" != MAINTAIN ]]; then
+            echo "::warning::Auto-merge requires a repository token with Write or Maintain access so the required check applies."
+          elif gh api "repos/${GITHUB_REPOSITORY}/rules/branches/main" --jq '
             any(.[]; .type == "required_status_checks"
               and .parameters.strict_required_status_checks_policy
               and any(.parameters.required_status_checks[]; .context == "check" and .integration_id == 15368))
