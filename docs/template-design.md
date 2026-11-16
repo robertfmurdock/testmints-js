@@ -18,31 +18,34 @@ already names the purpose, as in `./support/authenticated-mint.js`.
 
 ```ts
 // support/authenticated-mint.ts
-import { createMint } from '@continuous-excellence/testmints-js/vitest'
-import { authenticate, openProfile } from './profile-api.js'
+import { createMint } from "@continuous-excellence/testmints-js/vitest";
+import { authenticate, openProfile } from "./profile-api.js";
 
 export const mint = createMint({
-  shared: () => authenticate(),
-})
+	shared: () => authenticate(),
+});
 
-export { openProfile }
+export { openProfile };
 ```
 
 ```ts
-import { expect, test } from 'vitest'
-import { mint, openProfile } from './support/authenticated-mint.js'
+import { expect, test } from "vitest";
+import { mint, openProfile } from "./support/authenticated-mint.js";
 
-test('a member can change their name', mint({
-  setup: async ({ accessToken }) => ({
-    profile: await openProfile(accessToken),
-    displayName: 'Ada',
-  }),
-  exercise: async ({ profile, displayName }) => {
-    await profile.changeName(displayName)
-    return profile.readName()
-  },
-  verify: (name, { displayName }) => expect(name).toBe(displayName),
-}))
+test(
+	"a member can change their name",
+	mint({
+		setup: async ({ accessToken }) => ({
+			profile: await openProfile(accessToken),
+			displayName: "Ada",
+		}),
+		exercise: async ({ profile, displayName }) => {
+			await profile.changeName(displayName);
+			return profile.readName();
+		},
+		verify: (name, { displayName }) => expect(name).toBe(displayName),
+	}),
+);
 ```
 
 In Playwright, create the configured mint with the Playwright adapter and return or await its
@@ -50,16 +53,16 @@ promise from the runner callback. Keep fixtures destructured there. For example,
 `mint` shares a token obtained by signing in once:
 
 ```ts
-test('a member can read their profile', ({ request }) =>
-  mint({
-    setup: ({ accessToken }) => ({
-      headers: { Authorization: `Bearer ${accessToken}` },
-      profilePath: '/api/profile',
-    }),
-    exercise: ({ headers, profilePath }) => request.get(profilePath, { headers }),
-    verify: (response) => expect(response.ok()).toBe(true),
-  }),
-)
+test("a member can read their profile", ({ request }) =>
+	mint({
+		setup: ({ accessToken }) => ({
+			headers: { Authorization: `Bearer ${accessToken}` },
+			profilePath: "/api/profile",
+		}),
+		exercise: ({ headers, profilePath }) =>
+			request.get(profilePath, { headers }),
+		verify: (response) => expect(response.ok()).toBe(true),
+	}));
 ```
 
 Configured setup receives `(context, tools)`. The context comes from `shared` by default or from
@@ -122,12 +125,12 @@ setup and the optional `after` hook.
 
 ```ts
 const draftMint = createMint({
-  attempt: {
-    before: ({ scope }) =>
-      scope.using('profile draft', openProfileDraft, draft => draft.close()),
-    after: draft => draft.saveDiagnostics(),
-  },
-})
+	attempt: {
+		before: ({ scope }) =>
+			scope.using("profile draft", openProfileDraft, (draft) => draft.close()),
+		after: (draft) => draft.saveDiagnostics(),
+	},
+});
 ```
 
 `attempt.before` turns shared data into context for scenario setup and the optional
@@ -136,13 +139,17 @@ const draftMint = createMint({
 
 ```ts
 const workspaceMint = createMint({
-  shared: () => authenticate(),
-  attempt: {
-    before: ({ accessToken }, { scope }) =>
-      scope.using('workspace', () => openWorkspace(accessToken), workspace => workspace.close()),
-    after: workspace => workspace.uploadDiagnostics(),
-  },
-})
+	shared: () => authenticate(),
+	attempt: {
+		before: ({ accessToken }, { scope }) =>
+			scope.using(
+				"workspace",
+				() => openWorkspace(accessToken),
+				(workspace) => workspace.close(),
+			),
+		after: (workspace) => workspace.uploadDiagnostics(),
+	},
+});
 ```
 
 Hooks run in setup and teardown on each attempt, including retries. When `before` succeeds,
@@ -158,13 +165,18 @@ async disposal callback synchronously during mint creation. In Vitest, a suite c
 `afterAll` directly when it owns every test that uses the mint.
 
 ```ts
-import { afterAll } from 'vitest'
-import { createMint } from '@continuous-excellence/testmints-js/vitest'
+import { afterAll } from "vitest";
+import { createMint } from "@continuous-excellence/testmints-js/vitest";
 
-const profileServiceMint = createMint({
-  shared: ({ scope }) =>
-    scope.using('profile service', startProfileService, service => service.close()),
-}, afterAll)
+const profileServiceMint = createMint(
+	{
+		shared: ({ scope }) =>
+			scope.using("profile service", startProfileService, (service) =>
+				service.close(),
+			),
+	},
+	afterAll,
+);
 ```
 
 For Playwright, create the mint in a worker fixture. Capture the registered callback and await it
@@ -172,30 +184,45 @@ in the fixture's `finally` block. Tests using the fixture in the same worker sha
 mint and its cached resource.
 
 ```ts
-import { test as base } from '@playwright/test'
-import { createMint } from '@continuous-excellence/testmints-js/playwright'
-import { openProfileDirectory } from './profile-api.js'
+import { test as base } from "@playwright/test";
+import { createMint } from "@continuous-excellence/testmints-js/playwright";
+import { openProfileDirectory } from "./profile-api.js";
 
-function createDirectoryMint(registerDisposal: (dispose: () => Promise<void>) => void) {
-  return createMint({
-    shared: ({ scope }) =>
-      scope.using('profile directory', openProfileDirectory, directory => directory.close()),
-  }, registerDisposal)
+function createDirectoryMint(
+	registerDisposal: (dispose: () => Promise<void>) => void,
+) {
+	return createMint(
+		{
+			shared: ({ scope }) =>
+				scope.using("profile directory", openProfileDirectory, (directory) =>
+					directory.close(),
+				),
+		},
+		registerDisposal,
+	);
 }
 
-export const test = base.extend<object, {
-  directoryMint: ReturnType<typeof createDirectoryMint>
-}>({
-  directoryMint: [async ({}, use) => {
-    let dispose: (() => Promise<void>) | undefined
-    const directoryMint = createDirectoryMint(close => { dispose = close })
-    try {
-      await use(directoryMint)
-    } finally {
-      await dispose?.()
-    }
-  }, { scope: 'worker' }],
-})
+export const test = base.extend<
+	object,
+	{
+		directoryMint: ReturnType<typeof createDirectoryMint>;
+	}
+>({
+	directoryMint: [
+		async ({}, use) => {
+			let dispose: (() => Promise<void>) | undefined;
+			const directoryMint = createDirectoryMint((close) => {
+				dispose = close;
+			});
+			try {
+				await use(directoryMint);
+			} finally {
+				await dispose?.();
+			}
+		},
+		{ scope: "worker" },
+	],
+});
 ```
 
 See the [worker fixture test](../test/playwright.worker.spec.ts) for two tests using the same
@@ -216,8 +243,10 @@ its `before` receives the parent's attempt context.
 
 ```ts
 const workspaceReportMint = workspaceMint.extend({
-  attempt: { before: workspace => ({ workspace, reportPath: 'summary.json' }) },
-})
+	attempt: {
+		before: (workspace) => ({ workspace, reportPath: "summary.json" }),
+	},
+});
 ```
 
 Use `extend({ shared })` to derive new shared data from the parent's. A managed child receives
@@ -226,9 +255,13 @@ It can register disposal to own shared resources acquired by its descendants.
 
 ```ts
 const adminMint = profileServiceMint.extend({
-  shared: (service, { scope }) =>
-    scope.using('admin client', () => service.openAdminClient(), client => client.close()),
-})
+	shared: (service, { scope }) =>
+		scope.using(
+			"admin client",
+			() => service.openAdminClient(),
+			(client) => client.close(),
+		),
+});
 ```
 
 Each layer waits for its own shared value and runs its `before` hook before entering the next
