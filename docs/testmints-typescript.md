@@ -47,16 +47,19 @@ in for the user's real code.
 ### The smallest useful test
 
 ```ts
-import { expect, test } from 'vitest'
-import { mint } from '@testmints/vitest'
+import { expect, test } from "vitest";
+import { mint } from "@testmints/vitest";
 
-test('15 produces FizzBuzz', mint({
-  setup: () => 15,
-  exercise: input => fizzBuzz(input),
-  verify: output => {
-    expect(output).toBe('FizzBuzz')
-  },
-}))
+test(
+	"15 produces FizzBuzz",
+	mint({
+		setup: () => 15,
+		exercise: (input) => fizzBuzz(input),
+		verify: (output) => {
+			expect(output).toBe("FizzBuzz");
+		},
+	}),
+);
 ```
 
 There is no `.run()` to forget. Vitest visibly registers the test while `mint` synchronously
@@ -72,13 +75,16 @@ The exercise visibly uses the feature. Expected output appears in verification, 
 The assertion import is independent of the runner. This is equally valid with the same Vitest adapter:
 
 ```ts
-import assert from 'node:assert/strict'
+import assert from "node:assert/strict";
 
-test('15 produces FizzBuzz', mint({
-  setup: () => 15,
-  exercise: input => fizzBuzz(input),
-  verify: output => assert.equal(output, 'FizzBuzz'),
-}))
+test(
+	"15 produces FizzBuzz",
+	mint({
+		setup: () => 15,
+		exercise: (input) => fizzBuzz(input),
+		verify: (output) => assert.equal(output, "FizzBuzz"),
+	}),
+);
 ```
 
 No assertion integration is required. A hand-written check that throws on mismatch also works.
@@ -88,29 +94,30 @@ No assertion integration is required. A hand-written check that throws on mismat
 Use a local helper when rejection is the behavior under test:
 
 ```ts
-type Outcome<T> =
-  | { ok: true; value: T }
-  | { ok: false; error: unknown }
+type Outcome<T> = { ok: true; value: T } | { ok: false; error: unknown };
 
 async function captureOutcome<T>(
-  action: () => T | PromiseLike<T>,
+	action: () => T | PromiseLike<T>,
 ): Promise<Outcome<T>> {
-  try {
-    return { ok: true, value: await action() }
-  } catch (error) {
-    return { ok: false, error }
-  }
+	try {
+		return { ok: true, value: await action() };
+	} catch (error) {
+		return { ok: false, error };
+	}
 }
 
-test('an expired token is rejected', mint({
-  setup: () => ({ token: 'expired-token' }),
-  exercise: ({ token }) => captureOutcome(() => authenticate(token)),
-  verify: outcome => {
-    expect(outcome.ok).toBe(false)
-    if (outcome.ok) throw new Error('Expected authentication to fail')
-    expect(outcome.error).toBeInstanceOf(TokenExpiredError)
-  },
-}))
+test(
+	"an expired token is rejected",
+	mint({
+		setup: () => ({ token: "expired-token" }),
+		exercise: ({ token }) => captureOutcome(() => authenticate(token)),
+		verify: (outcome) => {
+			expect(outcome.ok).toBe(false);
+			if (outcome.ok) throw new Error("Expected authentication to fail");
+			expect(outcome.error).toBeInstanceOf(TokenExpiredError);
+		},
+	}),
+);
 ```
 
 The thunk lets the same helper capture a synchronous throw or a promise rejection; success carries the returned value. Assertions stay in verification, and an unexpected success fails there. This is ordinary user code, with no assertion-library integration. Only the wrapped operation becomes data: an uncaptured exercise throw or rejection still skips verification and triggers cleanup. Capturing an outcome does not own detached work.
@@ -118,23 +125,26 @@ The thunk lets the same helper capture a synchronous throw or a promise rejectio
 ### Async resources, with cleanup paired with acquisition
 
 ```ts
-test('a member can save their display name', mint({
-  setup: async ({ scope, signal }) => {
-    const account = await scope.using(
-      'temporary account',
-      () => createTestAccount({ signal }),
-      (account, { signal }) => deleteTestAccount(account.id, { signal }),
-    )
-    return { account, displayName: 'Ada' }
-  },
+test(
+	"a member can save their display name",
+	mint({
+		setup: async ({ scope, signal }) => {
+			const account = await scope.using(
+				"temporary account",
+				() => createTestAccount({ signal }),
+				(account, { signal }) => deleteTestAccount(account.id, { signal }),
+			);
+			return { account, displayName: "Ada" };
+		},
 
-  exercise: ({ account, displayName }, { signal }) =>
-    updateProfile(account.id, { displayName }, { signal }),
+		exercise: ({ account, displayName }, { signal }) =>
+			updateProfile(account.id, { displayName }, { signal }),
 
-  verify: profile => {
-    expect(profile.displayName).toBe('Ada')
-  },
-}))
+		verify: (profile) => {
+			expect(profile.displayName).toBe("Ada");
+		},
+	}),
+);
 ```
 
 The release function is mandatory when using `scope.using`. Registering it is part of acquiring the resource, not a separate statement the author must remember. The account survives through verification and is deleted afterward, including on assertion failure. If a later setup operation fails, already acquired resources are still released.
@@ -144,17 +154,21 @@ Exercise returns its promise directly. An `async` callback with `await` is equal
 ### Resources created by exercise live through verification
 
 ```ts
-test('an exported report contains the member name', mint({
-  setup: () => ({ memberName: 'Ada' }),
-  exercise: ({ memberName }, { scope, signal }) => scope.using(
-    'exported report',
-    () => exportReport({ memberName }, { signal }),
-    (report, { signal }) => report.remove({ signal }),
-  ),
-  verify: async report => {
-    expect(await report.readText()).toContain('Ada')
-  },
-}))
+test(
+	"an exported report contains the member name",
+	mint({
+		setup: () => ({ memberName: "Ada" }),
+		exercise: ({ memberName }, { scope, signal }) =>
+			scope.using(
+				"exported report",
+				() => exportReport({ memberName }, { signal }),
+				(report, { signal }) => report.remove({ signal }),
+			),
+		verify: async (report) => {
+			expect(await report.readText()).toContain("Ada");
+		},
+	}),
+);
 ```
 
 Exercise receives the same attempt scope as setup. The report remains readable throughout verification; `remove` runs afterward even if the assertion fails. A deliberately broken export should demonstrate both the native assertion failure and the subsequent release. Returning the resource from exercise alone would not register cleanup.
@@ -163,33 +177,39 @@ Exercise receives the same attempt scope as setup. The report remains readable t
 
 ```ts
 function withTestDatabase(scope: ResourceScope, signal: AbortSignal) {
-  return scope.using(
-    'test database',
-    () => createTestDatabase({ signal }),
-    (database, { signal }) => database.drop({ signal }),
-  )
+	return scope.using(
+		"test database",
+		() => createTestDatabase({ signal }),
+		(database, { signal }) => database.drop({ signal }),
+	);
 }
 
-test('a saved member can be found', mint({
-  setup: async ({ scope, signal }) => ({
-    database: await withTestDatabase(scope, signal),
-    member: { id: 'ada', name: 'Ada' },
-  }),
-  exercise: async ({ database, member }) => {
-    await database.save(member)
-    return database.find(member.id)
-  },
-  verify: member => expect(member).toEqual({ id: 'ada', name: 'Ada' }),
-}))
+test(
+	"a saved member can be found",
+	mint({
+		setup: async ({ scope, signal }) => ({
+			database: await withTestDatabase(scope, signal),
+			member: { id: "ada", name: "Ada" },
+		}),
+		exercise: async ({ database, member }) => {
+			await database.save(member);
+			return database.find(member.id);
+		},
+		verify: (member) => expect(member).toEqual({ id: "ada", name: "Ada" }),
+	}),
+);
 
-test('an unknown member is absent', mint({
-  setup: async ({ scope, signal }) => ({
-    database: await withTestDatabase(scope, signal),
-    missingId: 'unknown-member',
-  }),
-  exercise: ({ database, missingId }) => database.find(missingId),
-  verify: member => expect(member).toBeNull(),
-}))
+test(
+	"an unknown member is absent",
+	mint({
+		setup: async ({ scope, signal }) => ({
+			database: await withTestDatabase(scope, signal),
+			missingId: "unknown-member",
+		}),
+		exercise: ({ database, missingId }) => database.find(missingId),
+		verify: (member) => expect(member).toBeNull(),
+	}),
+);
 ```
 
 Each attempt gets its own database and cleanup registration; scenario inputs stay in each test. The helper accepts ownership explicitly instead of hiding it in a global fixture. Suite-wide fixtures remain runner-owned: use runner facilities for their creation and disposal, and do not register a shared suite resource for release after each attempt.
@@ -197,19 +217,22 @@ Each attempt gets its own database and cleanup registration; scenario inputs sta
 ### Explicit teardown and side-effect verification
 
 ```ts
-test('sending a welcome email uses the member address', mint({
-  setup: () => ({
-    member: { email: 'ada@example.test' },
-    mailer: createRecordingMailer(),
-  }),
-  exercise: ({ member, mailer }) => sendWelcome(member, mailer),
-  verify: (_result, { mailer }) => {
-    expect(mailer.messages).toEqual([
-      { to: 'ada@example.test', subject: 'Welcome' },
-    ])
-  },
-  teardown: ({ mailer }) => mailer.close(),
-}))
+test(
+	"sending a welcome email uses the member address",
+	mint({
+		setup: () => ({
+			member: { email: "ada@example.test" },
+			mailer: createRecordingMailer(),
+		}),
+		exercise: ({ member, mailer }) => sendWelcome(member, mailer),
+		verify: (_result, { mailer }) => {
+			expect(mailer.messages).toEqual([
+				{ to: "ada@example.test", subject: "Welcome" },
+			]);
+		},
+		teardown: ({ mailer }) => mailer.close(),
+	}),
+);
 ```
 
 Exercise may legitimately return `undefined`; verification can inspect the setup context for observable side effects. Do not ban command-style APIs to make the generic signatures look tidier. Explicit teardown is supported, but for acquired resources the acquisition/release pairing above is the recommended default.
@@ -231,29 +254,36 @@ TypeScript catches missing properties and incompatible phase data. Runtime valid
 Conceptually:
 
 ```ts
-type Awaitable<T> = T | PromiseLike<T>
+type Awaitable<T> = T | PromiseLike<T>;
 
 // Signal and event-helper details are omitted from this scope sketch.
-interface SetupTools extends PhaseTools { scope: ResourceScope }
-interface ExerciseTools extends PhaseTools { scope: ResourceScope }
+interface SetupTools extends PhaseTools {
+	scope: ResourceScope;
+}
+interface ExerciseTools extends PhaseTools {
+	scope: ResourceScope;
+}
 interface ResourceScope {
-  using<T>(
-    name: string,
-    acquire: () => Awaitable<T>,
-    release: (resource: T, tools: CleanupTools) => Awaitable<unknown>,
-  ): Promise<T>
-  defer(name: string, release: (tools: CleanupTools) => Awaitable<unknown>): void
+	using<T>(
+		name: string,
+		acquire: () => Awaitable<T>,
+		release: (resource: T, tools: CleanupTools) => Awaitable<unknown>,
+	): Promise<T>;
+	defer(
+		name: string,
+		release: (tools: CleanupTools) => Awaitable<unknown>,
+	): void;
 }
 
 interface TestmintDefinition<Input, Output> {
-  setup: (tools: SetupTools) => Awaitable<Input>
-  exercise: (input: Input, tools: ExerciseTools) => Awaitable<Output>
-  verify: (
-    output: Output,
-    input: Input,
-    tools: PhaseTools,
-  ) => Awaitable<unknown>
-  teardown?: (input: Input, tools: CleanupTools) => Awaitable<unknown>
+	setup: (tools: SetupTools) => Awaitable<Input>;
+	exercise: (input: Input, tools: ExerciseTools) => Awaitable<Output>;
+	verify: (
+		output: Output,
+		input: Input,
+		tools: PhaseTools,
+	) => Awaitable<unknown>;
+	teardown?: (input: Input, tools: CleanupTools) => Awaitable<unknown>;
 }
 ```
 
@@ -306,9 +336,9 @@ Do not add a callback-style `done` API. Having both callback completion and prom
 This remains incorrect:
 
 ```ts
-verify: async profile => {
-  checkPersistedProfile(profile) // missing await or return
-}
+verify: async (profile) => {
+	checkPersistedProfile(profile); // missing await or return
+};
 ```
 
 The outer callback finishes before its detached work. JavaScript has no general portable facility that lets a wrapper discover every promise created inside arbitrary code and establish which work belongs to the test. Unhandled-rejection reporting helps, but a promise may succeed late or have its rejection swallowed.
@@ -318,32 +348,36 @@ Ship a recommended typed lint configuration using [no-floating-promises](https:/
 For deliberately concurrent work, evaluate a small phase-owned `tasks.all` helper in the async spike. It is a candidate extension, not a required v1 API:
 
 ```ts
-exercise: ({ service }, { tasks }) => tasks.all([
-  ({ signal }) => service.read('first', { signal }),
-  ({ signal }) => service.read('second', { signal }),
-])
+exercise: ({ service }, { tasks }) =>
+	tasks.all([
+		({ signal }) => service.read("first", { signal }),
+		({ signal }) => service.read("second", { signal }),
+	]);
 ```
 
 If included, its ownership contract must be precise: each submitted callback belongs to the current phase, results preserve submission order, and the phase joins every submitted task before completion—even if the helper's returned promise was dropped. Child failure requests sibling cancellation, and all children settle before resource cleanup. The prototype must also settle how callers intentionally handle a child failure, so an observed rejection does not unexpectedly become a second failure at phase exit. This addresses the cleanup race that can follow `Promise.all` rejecting while siblings are still running. Compare its benefit with ordinary awaited functions and explicit settling of concurrent promises before committing to a task API. Sequential code needs no task abstraction.
 
-Also evaluate work launched *inside the feature* through a dependency injected during setup. The feature may return before that work finishes:
+Also evaluate work launched _inside the feature_ through a dependency injected during setup. The feature may return before that work finishes:
 
 ```ts
 // Optional prototype only: exerciseTasks and launch are provisional names.
-test('saving a member updates the search index', mint({
-  setup: ({ exerciseTasks }) => {
-    const index = createRecordingIndex()
-    const service = createMemberService({
-      index,
-      launch: work => exerciseTasks.launch(work),
-    })
-    return { service, index, member: { id: 'ada', name: 'Ada' } }
-  },
-  exercise: ({ service, member }) => service.save(member),
-  verify: (_result, { index }) => {
-    expect(index.entries).toEqual([{ id: 'ada', name: 'Ada' }])
-  },
-}))
+test(
+	"saving a member updates the search index",
+	mint({
+		setup: ({ exerciseTasks }) => {
+			const index = createRecordingIndex();
+			const service = createMemberService({
+				index,
+				launch: (work) => exerciseTasks.launch(work),
+			});
+			return { service, index, member: { id: "ada", name: "Ada" } };
+		},
+		exercise: ({ service, member }) => service.save(member),
+		verify: (_result, { index }) => {
+			expect(index.entries).toEqual([{ id: "ada", name: "Ada" }]);
+		},
+	}),
+);
 ```
 
 In this spike, `service.save` uses the injected launcher to submit its index update. Setup receives a capability bound explicitly to the upcoming exercise, without a mutable global current phase. The proposed `SetupTools` extension is optional and absent from the baseline type sketch. Define when submission opens and closes: constructing the dependency during setup is allowed, launching exercise work during setup or after exercise closes is rejected. Work submitted while exercise is active remains owned even when the feature returns no task handle. Verification and the exercise-end event wait for all owned work. On callback or child failure, request cancellation, settle all owned children, skip verification, then clean up. Test submissions from running children and intentional rejection handling before choosing exact task APIs. Arbitrary work launched through other dependencies remains outside this guarantee.
@@ -366,12 +400,12 @@ Use TypeScript with published JavaScript and declaration files. Keep the core in
 
 The logical boundaries are:
 
-| Component | Responsibility |
-|---|---|
-| Core | Definition validation, phase sequencing, awaited callbacks, resource lifetime, failure preservation |
-| Event contract | Versioned events and JSON Schema; no runner-specific task objects |
-| Runner adapter | Registration, fixture access, identity, retries, supported cancellation, final runner outcome |
-| NDJSON sink and inspector | Live local artifacts, validation, readable phase summaries |
+| Component                 | Responsibility                                                                                      |
+| ------------------------- | --------------------------------------------------------------------------------------------------- |
+| Core                      | Definition validation, phase sequencing, awaited callbacks, resource lifetime, failure preservation |
+| Event contract            | Versioned events and JSON Schema; no runner-specific task objects                                   |
+| Runner adapter            | Registration, fixture access, identity, retries, supported cancellation, final runner outcome       |
+| NDJSON sink and inspector | Live local artifacts, validation, readable phase summaries                                          |
 
 These can begin as package exports rather than four separately released packages. Package names in examples are provisional.
 
@@ -382,10 +416,10 @@ The adapter SDK exposes `validateDefinition`, an awaited `executeDefinition`, an
 ```ts
 // Adapter-author sketch, not the ordinary test-author API.
 function registerMint(name, definition) {
-  const validated = validateDefinition(definition)
-  runner.register(name, runnerContext =>
-    executeDefinition(validated, adaptContext(runnerContext)),
-  )
+	const validated = validateDefinition(definition);
+	runner.register(name, (runnerContext) =>
+		executeDefinition(validated, adaptContext(runnerContext)),
+	);
 }
 ```
 
@@ -436,15 +470,15 @@ Historical analysis can consume saved CI artifacts. A Trust Dashboard integratio
 
 Research checked September 5, 2026. These are overlapping capabilities, not evidence that no alternative could satisfy a team's needs.
 
-| Tool | Existing capability | Consequence for this proposal |
-|---|---|---|
-| [Vitest](https://vitest.dev/api/test) and [reporters](https://vitest.dev/api/advanced/reporters) | Promise-aware tests, fixtures, runner lifecycle and custom reporting | Use as the first host; preserve its assertions and runner features. Add explicit phase semantics and portable events. |
-| [Playwright reporters](https://playwright.dev/docs/api/class-reporter) and [TestInfo](https://playwright.dev/docs/api/class-testinfo) | Live step callbacks, per-attempt results, output, attachments | The closest low-effort option for browser tests may be ordinary Playwright steps. A Testmints adapter must add enough omission prevention and cross-runner consistency to justify itself. |
-| [Allure steps](https://allurereport.org/docs/steps/) | Structured steps with timing, status, attachments, and fixture presentation | Reuse report consumers where practical. Rich phase visualization is already solved in substantial part; the remaining hypothesis is the authoring contract and transport portability. |
-| [ReportPortal](https://reportportal.io/docs/work-with-reports/ViewLaunches/) | Launch/suite/test/step/log hierarchy in a centralized reporting platform | An optional consumer for teams already invested in it; no reason to build a competing storage platform for the MVP. |
-| [Cucumber Messages](https://github.com/cucumber/messages) | A protocol for execution and related information, with NDJSON support | A direct precedent the proposal must acknowledge. Evaluate event mappings before freezing a new schema; do not claim structured test streams are a novel invention. |
-| [Serenity/JS Screenplay](https://serenity-js.org/handbook/design/screenplay-pattern/) | Reusable tasks, interactions, and questions for acceptance-test expression | A credible alternative when that abstraction matches team intent. Testmints favors direct feature calls and plain data to keep small tests accessible. |
-| [StrykerJS](https://stryker-mutator.io/docs/stryker-js/introduction/) | Mutation testing to assess whether tests detect code changes | Complements the top philosophical priority: demonstrate failure. Complete phases alone cannot establish test adequacy. |
+| Tool                                                                                                                                  | Existing capability                                                         | Consequence for this proposal                                                                                                                                                             |
+| ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Vitest](https://vitest.dev/api/test) and [reporters](https://vitest.dev/api/advanced/reporters)                                      | Promise-aware tests, fixtures, runner lifecycle and custom reporting        | Use as the first host; preserve its assertions and runner features. Add explicit phase semantics and portable events.                                                                     |
+| [Playwright reporters](https://playwright.dev/docs/api/class-reporter) and [TestInfo](https://playwright.dev/docs/api/class-testinfo) | Live step callbacks, per-attempt results, output, attachments               | The closest low-effort option for browser tests may be ordinary Playwright steps. A Testmints adapter must add enough omission prevention and cross-runner consistency to justify itself. |
+| [Allure steps](https://allurereport.org/docs/steps/)                                                                                  | Structured steps with timing, status, attachments, and fixture presentation | Reuse report consumers where practical. Rich phase visualization is already solved in substantial part; the remaining hypothesis is the authoring contract and transport portability.     |
+| [ReportPortal](https://reportportal.io/docs/work-with-reports/ViewLaunches/)                                                          | Launch/suite/test/step/log hierarchy in a centralized reporting platform    | An optional consumer for teams already invested in it; no reason to build a competing storage platform for the MVP.                                                                       |
+| [Cucumber Messages](https://github.com/cucumber/messages)                                                                             | A protocol for execution and related information, with NDJSON support       | A direct precedent the proposal must acknowledge. Evaluate event mappings before freezing a new schema; do not claim structured test streams are a novel invention.                       |
+| [Serenity/JS Screenplay](https://serenity-js.org/handbook/design/screenplay-pattern/)                                                 | Reusable tasks, interactions, and questions for acceptance-test expression  | A credible alternative when that abstraction matches team intent. Testmints favors direct feature calls and plain data to keep small tests accessible.                                    |
+| [StrykerJS](https://stryker-mutator.io/docs/stryker-js/introduction/)                                                                 | Mutation testing to assess whether tests detect code changes                | Complements the top philosophical priority: demonstrate failure. Complete phases alone cannot establish test adequacy.                                                                    |
 
 The pitch is therefore a combination: a small four-phase authoring contract, owned async/resource lifetimes, omissions caught at the earliest feasible boundary, and portable live events. Each component exists elsewhere in some form. Validate the value of their combination before expanding the surface area.
 
@@ -476,23 +510,23 @@ Compare the event schema with Cucumber Messages, demonstrate one report-system m
 
 ## Acceptance Cases and Honest Limits
 
-| Concern | Required evidence |
-|---|---|
-| Missing or malformed phases | Type fixtures and plain-JS runtime tests; no setup side effects on invalid definitions |
-| BYOAL | Existing throwing assertions, async rejection, successful chain/value returns, and custom checks work without registration or observation; empty callbacks and bare predicates are documented limits |
-| Type flow | Anonymous objects, async values, named helpers, void output, and incorrect input/output use checked by the compiler |
-| Expected rejection | `captureOutcome` handles synchronous throws, rejected promises, and success; verification checks the error and fails on unexpected success; uncaptured exercise failures still skip verify |
-| Async phase ordering | Rejected thenables and delayed verification cannot yield a premature pass; if included, an injected exercise launcher delays exercise-end until owned children settle and starts verification only on exercise success |
-| Concurrent-work extension, if included | Dropped group promise remains owned; rejection handling is explicit; sibling failure never starts cleanup while owned work remains active |
-| Partial setup | Earlier resources released after later setup failure; unresolved acquisitions remain owned |
-| Exercise-created resource | Resource is usable during verify and released after assertion failure; setup and exercise share one scope |
-| Reporter failure | Throwing phase/event sink cannot skip user work, prevent cleanup, or replace the primary failure; reporting is marked incomplete |
-| Multiple failures | Original assertion/diff preserved; all attempted cleanup failures retained; no duplicate release |
-| Cancellation | Cooperative stop, separate cleanup allowance, and hard worker termination tested as different outcomes |
-| Parallel tests and retries | No shared current-test state; fresh scopes and distinct attempts; final runner failure remains visible even after verify completed |
-| Events and artifacts | Start/end correlation, skipped phases, backpressure, sink failure, interrupted tail, worker restart, and redaction covered |
-| BYOTR | Same core behavior under two runners; capability differences documented and conformance-tested |
-| Philosophy | Human readability comparison and deliberately broken feature demonstrate more than a structurally green test |
+| Concern                                | Required evidence                                                                                                                                                                                                      |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Missing or malformed phases            | Type fixtures and plain-JS runtime tests; no setup side effects on invalid definitions                                                                                                                                 |
+| BYOAL                                  | Existing throwing assertions, async rejection, successful chain/value returns, and custom checks work without registration or observation; empty callbacks and bare predicates are documented limits                   |
+| Type flow                              | Anonymous objects, async values, named helpers, void output, and incorrect input/output use checked by the compiler                                                                                                    |
+| Expected rejection                     | `captureOutcome` handles synchronous throws, rejected promises, and success; verification checks the error and fails on unexpected success; uncaptured exercise failures still skip verify                             |
+| Async phase ordering                   | Rejected thenables and delayed verification cannot yield a premature pass; if included, an injected exercise launcher delays exercise-end until owned children settle and starts verification only on exercise success |
+| Concurrent-work extension, if included | Dropped group promise remains owned; rejection handling is explicit; sibling failure never starts cleanup while owned work remains active                                                                              |
+| Partial setup                          | Earlier resources released after later setup failure; unresolved acquisitions remain owned                                                                                                                             |
+| Exercise-created resource              | Resource is usable during verify and released after assertion failure; setup and exercise share one scope                                                                                                              |
+| Reporter failure                       | Throwing phase/event sink cannot skip user work, prevent cleanup, or replace the primary failure; reporting is marked incomplete                                                                                       |
+| Multiple failures                      | Original assertion/diff preserved; all attempted cleanup failures retained; no duplicate release                                                                                                                       |
+| Cancellation                           | Cooperative stop, separate cleanup allowance, and hard worker termination tested as different outcomes                                                                                                                 |
+| Parallel tests and retries             | No shared current-test state; fresh scopes and distinct attempts; final runner failure remains visible even after verify completed                                                                                     |
+| Events and artifacts                   | Start/end correlation, skipped phases, backpressure, sink failure, interrupted tail, worker restart, and redaction covered                                                                                             |
+| BYOTR                                  | Same core behavior under two runners; capability differences documented and conformance-tested                                                                                                                         |
+| Philosophy                             | Human readability comparison and deliberately broken feature demonstrate more than a structurally green test                                                                                                           |
 
 ## Deferred and Still to Validate
 

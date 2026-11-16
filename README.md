@@ -17,14 +17,17 @@ The test suite is first-class usage documentation: each test should show a reali
 also proving the library behavior it relies on.
 
 ```ts
-import { expect, test } from 'vitest'
-import { mint } from '@continuous-excellence/testmints-js/vitest'
+import { expect, test } from "vitest";
+import { mint } from "@continuous-excellence/testmints-js/vitest";
 
-test('15 produces FizzBuzz', mint({
-  setup: () => 15,
-  exercise: (input) => fizzBuzz(input),
-  verify: (output) => expect(output).toBe('FizzBuzz'),
-}))
+test(
+	"15 produces FizzBuzz",
+	mint({
+		setup: () => 15,
+		exercise: (input) => fizzBuzz(input),
+		verify: (output) => expect(output).toBe("FizzBuzz"),
+	}),
+);
 ```
 
 `mint` validates the complete definition when the test file is collected, while keeping Vitest's
@@ -44,12 +47,12 @@ Enable the Node/Vitest reporting plugin in `vitest.config.ts`. Existing `mint` c
 per-test configuration.
 
 ```ts
-import { defineConfig } from 'vitest/config'
-import { testmintsVitest } from '@continuous-excellence/testmints-js/vitest'
+import { defineConfig } from "vitest/config";
+import { testmintsVitest } from "@continuous-excellence/testmints-js/vitest";
 
 export default defineConfig({
-  plugins: [testmintsVitest()],
-})
+	plugins: [testmintsVitest()],
+});
 ```
 
 Each Vitest process writes a run directory under `.testmints/` (or the supplied `outputDir`). Each
@@ -77,14 +80,22 @@ Resources acquired through `scope.using()` survive verification and are released
 including after a failed setup, exercise, or verification.
 
 ```ts
-test('a member can save their display name', mint({
-  setup: async ({ scope }) => ({
-    account: await scope.using('temporary account', createAccount, deleteAccount),
-    displayName: 'Ada',
-  }),
-  exercise: ({ account, displayName }) => updateProfile(account.id, { displayName }),
-  verify: (profile) => expect(profile.displayName).toBe('Ada'),
-}))
+test(
+	"a member can save their display name",
+	mint({
+		setup: async ({ scope }) => ({
+			account: await scope.using(
+				"temporary account",
+				createAccount,
+				deleteAccount,
+			),
+			displayName: "Ada",
+		}),
+		exercise: ({ account, displayName }) =>
+			updateProfile(account.id, { displayName }),
+		verify: (profile) => expect(profile.displayName).toBe("Ada"),
+	}),
+);
 ```
 
 ## Playwright Test
@@ -94,22 +105,21 @@ same inspectable local artifacts. Playwright requires fixture names to be visibl
 the test callback; Testmints phases close over those runner-owned fixtures:
 
 ```ts
-import { expect, test as base } from '@playwright/test'
-import { mint } from '@continuous-excellence/testmints-js/playwright'
+import { expect, test as base } from "@playwright/test";
+import { mint } from "@continuous-excellence/testmints-js/playwright";
 
 const test = base.extend<{ greeting: string }>({
-  greeting: async ({}, use) => use('Hello'),
-})
-test('a visitor sees a greeting', ({ page, greeting }) =>
-  mint({
-    setup: async () => {
-      await page.setContent(`<main>${greeting}</main>`)
-      return page.getByRole('main')
-    },
-    exercise: (main) => main.textContent(),
-    verify: (content) => expect(content).toBe(greeting),
-  }),
-)
+	greeting: async ({}, use) => use("Hello"),
+});
+test("a visitor sees a greeting", ({ page, greeting }) =>
+	mint({
+		setup: async () => {
+			await page.setContent(`<main>${greeting}</main>`);
+			return page.getByRole("main");
+		},
+		exercise: (main) => main.textContent(),
+		verify: (content) => expect(content).toBe(greeting),
+	}));
 ```
 
 `mint` validates as the Playwright test begins. The implicit-return arrow keeps its promise visible
@@ -122,11 +132,14 @@ the runner outcome; `testmints inspect` shows the failure even when no phase str
 Add the reporter to `playwright.config.ts` to aggregate attached phase streams under `.testmints`:
 
 ```ts
-import { defineConfig } from '@playwright/test'
+import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
-  reporter: [['list'], ['@continuous-excellence/testmints-js/playwright/reporter']],
-})
+	reporter: [
+		["list"],
+		["@continuous-excellence/testmints-js/playwright/reporter"],
+	],
+});
 ```
 
 ## Development
