@@ -11,8 +11,13 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
     steps:
       - uses: actions/checkout@v7
+      - name: Record tested commit
+        id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -44,6 +49,9 @@ jobs:
   release:
     if: github.ref == 'refs/heads/main'
     needs: check
+    concurrency:
+      group: npm-release-main
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -53,7 +61,15 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.ref_name }}
+          ref: ${{ needs.check.outputs.sha }}
+      - name: Configure Tagger upstream
+        env:
+          TESTED_SHA: ${{ needs.check.outputs.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$TESTED_SHA"
+          git fetch --tags origin +refs/heads/main:refs/remotes/origin/main
+          git switch -C main "$TESTED_SHA"
+          git branch --set-upstream-to=origin/main main
       - uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -95,11 +111,17 @@ jobs:
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: npm run release:verify -- .release/*.tgz
-      - name: Publish with npm trusted publishing
+      - name: Compare with the published package
+        id: comparison
         if: steps.version.outputs.publish == 'true'
+        run: |
+          decision="$(node scripts/compare-release.mjs @continuous-excellence/testmints-js .release/*.tgz)"
+          echo "$decision" >> "$GITHUB_OUTPUT"
+      - name: Publish with npm trusted publishing
+        if: steps.comparison.outputs.publish == 'true'
         run: npm publish .release/*.tgz --access public
       - name: Confirm npm publication
-        if: steps.version.outputs.publish == 'true'
+        if: steps.comparison.outputs.publish == 'true'
         env:
           PACKAGE: "@continuous-excellence/testmints-js"
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
@@ -112,7 +134,7 @@ jobs:
           done
           exit 1
       - name: Tag the published release
-        if: steps.version.outputs.publish == 'true'
+        if: steps.comparison.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: npm run --silent release:tag -- "${{ steps.version.outputs.version }}"
