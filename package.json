@@ -64,7 +64,7 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.6.8",
-		"@continuous-excellence/tagger": "3.9.5",
+		"@continuous-excellence/tagger": "3.9.6",
 		"@playwright/test": "^1.65.1",
 		"@types/node": "^26.6.6",
 		"tar-stream": "^3.2.2",
