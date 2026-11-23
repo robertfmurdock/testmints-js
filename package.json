@@ -67,7 +67,7 @@
 		"@continuous-excellence/tagger": "3.9.7",
 		"@playwright/test": "^1.65.1",
 		"@types/node": "^26.6.6",
-		"tar-stream": "^3.2.2",
+		"tar-stream": "^3.3.0",
 		"typescript": "^7.0.2",
 		"vitest": "^5.1.1"
 	}
