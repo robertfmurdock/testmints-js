@@ -63,7 +63,7 @@
 		"release:tag": "bash scripts/tag-release.sh"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.6.8",
+		"@biomejs/biome": "^2.6.9",
 		"@continuous-excellence/tagger": "3.9.7",
 		"@playwright/test": "^1.65.1",
 		"@types/node": "^26.6.6",
